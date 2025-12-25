@@ -1,6 +1,101 @@
-openai==1.101.0
-pymupdf==1.26.4
+# Core Dependencies
+Python==3.9+
+
+# Web Framework & Server
+flask==2.3.3
+flask-cors==4.0.0
+werkzeug==2.3.7
+gunicorn==21.2.0
+
+# AI/ML & Vector Operations
+deepseek-sdk==0.1.0
+openai==1.3.5
+langchain==0.0.350
+langchain-community==0.0.10
+sentence-transformers==2.2.2
+chromadb==0.4.10
+faiss-cpu==1.7.4
+numpy==1.24.3
+scipy==1.11.2
+scikit-learn==1.3.1
+
+# Data Processing & Indexing
+pandas==2.0.3
+pyarrow==13.0.0
+elasticsearch==8.9.0
+elasticsearch-py==8.9.0
+
+# API & HTTP
+requests==2.31.0
+httpx==0.24.1
+aiohttp==3.8.5
+urllib3==2.0.4
+
+# Database
+sqlalchemy==2.0.21
+psycopg2-binary==2.9.7
+pymongo==4.5.0
+redis==5.0.0
+
+# Document Processing
+pdf2image==1.16.3
+pytesseract==0.3.10
+python-docx==0.8.11
+openpyxl==3.1.2
 PyPDF2==3.0.1
-python-dotenv==1.1.0
-tiktoken==0.11.0
-pyyaml==6.0.2
+
+# Text Processing & NLP
+nltk==3.8.1
+spacy==3.6.1
+transformers==4.33.0
+tokenizers==0.13.3
+regex==2023.9.24
+
+# Caching & Rate Limiting
+cachetools==5.3.1
+tenacity==8.2.3
+
+# Async & Concurrency
+aiofiles==23.2.1
+asyncio==3.4.3
+concurrent-futures==3.1.1
+
+# Logging & Monitoring
+python-logging-loki==0.3.2
+prometheus-client==0.17.1
+sentry-sdk==1.32.0
+
+# Environment & Configuration
+python-dotenv==1.0.0
+pydantic==2.3.0
+pyyaml==6.0.1
+
+# Testing
+pytest==7.4.0
+pytest-asyncio==0.21.1
+pytest-cov==4.1.0
+unittest-mock==1.5.0
+
+# Code Quality
+black==23.9.1
+flake8==6.1.0
+pylint==2.17.5
+isort==5.12.0
+
+# Security
+cryptography==41.0.3
+pyjwt==2.8.0
+passlib==1.7.4
+python-jose==3.3.0
+
+# Utils & Helpers
+python-dateutil==2.8.2
+pytz==2023.3
+tqdm==4.66.1
+click==8.1.7
+colorama==0.4.6
+
+# API Documentation
+fastapi==0.103.0
+uvicorn==0.23.2
+pydantic-settings==2.0.3

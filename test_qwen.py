@@ -4,8 +4,8 @@ import json
 import os
 
 # 配置信息
-API_KEY = "sk-fXM4W0CdcKnNp3NVDfF85f2b90284b11AfDdF9F5627f627b"
-BASE_URL = "https://aiplus.airchina.com.cn:18080"
+API_KEY = ""
+BASE_URL = ""
 MODEL_NAME = "Qwen2.5-32B"
 
 def test_with_openai_library():
@@ -61,4 +61,5 @@ if __name__ == "__main__":
     print(f"目标 URL: {BASE_URL}")
     print("-" * 30)
     test_with_openai_library()
+
     test_with_requests_raw()

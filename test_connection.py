@@ -3,8 +3,8 @@ import os
 import json
 
 # 配置你的内网 API 信息
-API_KEY = "sk-fXM4W0CdcKnNp3NVDfF85f2b90284b11AfDdF9F5627f627b"  # 如果内网不需要KEY，可以随便填个"None"
-BASE_URL = "https://aiplus.airchina.com.cn:18080/v1"
+API_KEY = ""  # 如果内网不需要KEY，可以随便填个"None"
+BASE_URL = ""
 MODEL_NAME = "DeepSeek-R1"
 
 def test_api():
@@ -46,4 +46,5 @@ def test_api():
         print(f"详情: {e}")
 
 if __name__ == "__main__":
+
     test_api()

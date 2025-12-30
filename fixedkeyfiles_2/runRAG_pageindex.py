@@ -513,17 +513,25 @@ class RecallTab(QWidget): # 从 QMainWindow 改为 QWidget
 
     def load_file_content(self, file_path):
         try:
-            with open(file_path, 'r', encoding='utf-8') as f:
+            # === 关键修复：使用 utf-8-sig 自动处理 BOM ===
+            with open(file_path, 'r', encoding='utf-8-sig') as f:
                 self.data = json.load(f)
             
             self.all_nodes = []
-            if isinstance(self.data, list):
-                self._flatten_structure(self.data)
-            elif isinstance(self.data, dict):
+
+            # === JSON 结构解析逻辑（已兼容新旧格式） ===
+            if isinstance(self.data, dict):
                 if 'structure' in self.data:
-                    self._flatten_structure(self.data['structure'])
+                    structure = self.data['structure']
                 else:
-                    self._flatten_structure([self.data])
+                    structure = [self.data]
+            elif isinstance(self.data, list):
+                structure = self.data
+            else:
+                raise ValueError("JSON 文件格式不被识别")
+
+            self._flatten_structure(structure)
+            # ======================================
 
             self.last_loaded_path = file_path
             
@@ -679,6 +687,7 @@ class RecallTab(QWidget): # 从 QMainWindow 改为 QWidget
             title = node.get('title', '无标题')
             text = node.get('text', '')
             page_info = f"页码: {node.get('start_index', '-')} - {node.get('end_index', '-')}"
+
             doc.add_heading(title, level=1)
             p = doc.add_paragraph()
             run = p.add_run(page_info)

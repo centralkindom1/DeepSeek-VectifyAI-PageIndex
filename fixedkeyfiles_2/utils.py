@@ -17,25 +17,25 @@ from types import SimpleNamespace as config
 import tiktoken
 from dotenv import load_dotenv
 
-# === 关键改动：尝试导入 pdfplumber，解决中文乱码 ===
 try:
     import pdfplumber
     HAS_PDFPLUMBER = True
 except ImportError:
     HAS_PDFPLUMBER = False
-    import PyPDF2 # 仅作为不得已的备选
+    import PyPDF2 
 
 # 1. Network & Environment Config
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 ssl._create_default_https_context = ssl._create_unverified_context
 os.environ['CURL_CA_BUNDLE'] = ''
 
-# === 关键改动：彻底清理代理，防止 407/Login Page 错误 ===
+# 彻底清理代理，防止连接错误
 for k in ['HTTP_PROXY', 'HTTPS_PROXY', 'http_proxy', 'https_proxy']:
     os.environ.pop(k, None)
 
 # 2. API Config
 load_dotenv()
+# 默认 Key，如果环境变量中有则优先使用环境变量
 CHATGPT_API_KEY = os.getenv("CHATGPT_API_KEY", "YOUR API KEY")
 
 # --- Universal Fallback Object ---
@@ -52,14 +52,14 @@ class UniversalFallback(dict):
     def __len__(self): return 0
     def get(self, key, default=None): return super().get(key, default)
 
-def request_api_stream_sync(model, messages, timeout=600): # 改动：超时延长至 600s
+def request_api_stream_sync(model, messages, timeout=600): 
     target_model = "DeepSeek-V3"
     
     headers = {
         "Content-Type": "application/json",
         "Authorization": f"Bearer {CHATGPT_API_KEY}",
         "Accept": "application/json",
-        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36" # 改动：伪装 UA
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36" 
     }
     
     payload = {
@@ -69,14 +69,26 @@ def request_api_stream_sync(model, messages, timeout=600): # 改动：超时延�
         "temperature": 0.1
     }
     
-    urls_to_try = [
-        "https://www.deepseek.com:18080/v1/chat/completions",
-        "https://www.deepseek.com:18080/chat/completions"      
+    # === 关键修正：确保 URL 是纯净的字符串，没有任何 Markdown 标记 ===
+    raw_urls = [
+        "https://WWW.DEEPSEEK.COM:10000/v1/chat/completions",
+        "https://WWW.DEEPSEEK.COM:100000/chat/completions"      
     ]
 
-    for url in urls_to_try:
+    for url in raw_urls:
         try:
+            # === 鲁棒性修正：自动清洗 URL ===
+            # 去除首尾空格
             url = url.strip()
+            # 如果 URL 意外包含了 Markdown 格式 [url](url)，自动提取前半部分
+            if url.startswith("[") and "](" in url:
+                url = url.split("](")[0].replace("[", "")
+            
+            # 最终检查：必须以 http 开头
+            if not url.startswith("http"):
+                logging.warning(f"⚠️ Skipping invalid URL format: {url}")
+                continue
+
             response = requests.post(
                 url, 
                 headers=headers, 
@@ -130,7 +142,6 @@ def clean_deepseek_content(content):
 def ChatGPT_API_with_finish_reason(model, prompt, api_key=None, chat_history=None):
     messages = chat_history + [{"role": "user", "content": prompt}] if chat_history else [{"role": "user", "content": prompt}]
     
-    # 改动：指数退避重试 (3s, 6s, 12s, 24s, 48s)
     max_retries = 5
     for i in range(max_retries):
         raw = request_api_stream_sync(model, messages)
@@ -159,7 +170,12 @@ def get_json_content(content):
     if match: return match.group(1)
     return content
 
+# === ROBUST EXTRACTION FIX ===
 def extract_json(content):
+    """
+    Robust JSON extraction capable of handling markdown blocks, extra commas, 
+    and non-standard JSON often returned by LLMs.
+    """
     if content == "Error" or not content: 
         return UniversalFallback()
     
@@ -167,26 +183,43 @@ def extract_json(content):
         content = clean_deepseek_content(content)
         json_str = ""
         
-        # 1. Markdown 代码块
+        # 1. Try Markdown Block
         json_match = re.search(r'```json\s*([\s\S]*?)\s*```', content)
         if json_match:
             json_str = json_match.group(1)
         else:
-            # 2. 寻找最外层大括号/中括号
-            match_list = re.search(r'\[.*\]', content, re.DOTALL)
-            match_dict = re.search(r'\{.*\}', content, re.DOTALL)
-            if match_list: json_str = match_list.group(0)
-            elif match_dict: json_str = match_dict.group(0)
-            else: json_str = content
+            # 2. Find outermost brackets (non-greedy logic for safety)
+            start_idx = content.find('{')
+            end_idx = content.rfind('}')
+            list_start = content.find('[')
+            list_end = content.rfind(']')
+            
+            # Determine if it's likely a dict or a list
+            if start_idx != -1 and (list_start == -1 or start_idx < list_start):
+                 if end_idx != -1: json_str = content[start_idx : end_idx + 1]
+            elif list_start != -1:
+                 if list_end != -1: json_str = content[list_start : list_end + 1]
+            else:
+                 json_str = content
         
         if not json_str: return UniversalFallback()
         
-        # 修复常见的尾部逗号错误
+        # 3. Clean up common errors
+        # Remove trailing commas like ", }" -> "}"
         json_str = re.sub(r',\s*([\]}])', r'\1', json_str)
+        
         return json.loads(json_str)
 
+    except json.JSONDecodeError:
+        # 4. Fallback for specific known fields if strict parsing fails
+        if "summary" in content:
+            match = re.search(r'"summary"\s*:\s*"(.*?)"', content, re.DOTALL)
+            if match: return {"summary": match.group(1)}
+            
+        logging.warning(f"JSON Parsing failed strictly. Raw content start: {content[:50]}...")
+        return UniversalFallback()
     except Exception as e:
-        logging.error(f"JSON Parsing failed: {e}")
+        logging.error(f"JSON Parsing fatal error: {e}")
         return UniversalFallback()
 
 def count_tokens(text, model=None):
@@ -202,6 +235,8 @@ def write_node_id(data, node_id=0):
     return node_id
 
 def get_nodes(structure):
+    # NOTE: This original version uses deepcopy, which prevents in-place modification.
+    # For in-place modifications (like summaries), use collect_nodes_by_reference in page_index.py
     if isinstance(structure, dict):
         sn = copy.deepcopy(structure); sn.pop('nodes', None)
         nodes = [sn]
@@ -226,7 +261,6 @@ class JsonLogger:
     def log(self, level, message, **kwargs):
         entry = {'message': str(message), 'level': level, 'timestamp': datetime.now().isoformat()}
         self.log_data.append(entry)
-        # 改动：强制 utf-8-sig，解决 JSON 文件在 Windows 打开乱码
         try:
             with open(os.path.join("logs", self.filename), "w", encoding="utf-8-sig") as f:
                 json.dump(self.log_data, f, indent=2, ensure_ascii=False)
@@ -235,7 +269,6 @@ class JsonLogger:
     def info(self, m): self.log("INFO", m)
     def error(self, m): self.log("ERROR", m)
 
-# === 核心改动：使用 pdfplumber 提取文本，解决乱码 ===
 def get_page_tokens(pdf_path, model=None):
     page_list = []
     
@@ -244,7 +277,6 @@ def get_page_tokens(pdf_path, model=None):
         try:
             with pdfplumber.open(pdf_path) as pdf:
                 for page in pdf.pages:
-                    # layout=True 保留布局，有助于语义理解，但这里为了兼容旧逻辑暂时不用
                     t = page.extract_text() or "" 
                     t = t.replace('\x00', '')
                     page_list.append((t, len(t)))
@@ -252,7 +284,6 @@ def get_page_tokens(pdf_path, model=None):
         except Exception as e:
             print(f"[ERROR] pdfplumber failed: {e}. Falling back to PyPDF2.")
             
-    # Fallback to PyPDF2 (Known to cause mojibake for CJK identity-h fonts)
     try:
         import PyPDF2
         reader = PyPDF2.PdfReader(pdf_path)
@@ -266,7 +297,6 @@ def get_page_tokens(pdf_path, model=None):
     
     return page_list
 
-# === 核心改动：使用 pdfplumber 获取指定页文本 ===
 def get_text_of_pages(pdf_path, start, end, tag=True):
     text = ""
     start = max(1, start)
@@ -282,7 +312,6 @@ def get_text_of_pages(pdf_path, start, end, tag=True):
             return text
         except: pass
 
-    # Fallback
     try:
         import PyPDF2
         reader = PyPDF2.PdfReader(pdf_path)
@@ -420,6 +449,7 @@ def add_node_text(structure, page_list):
         except: pass
 
 async def generate_summaries_for_structure(structure, model=None):
+    # Fallback legacy function if used elsewhere, though page_index.py now has its own robust version
     nodes = get_nodes(structure)
     tasks = []
     async def summarize_node(node):

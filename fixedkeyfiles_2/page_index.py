@@ -9,12 +9,12 @@ from datetime import datetime
 from io import BytesIO
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
+# Import from your utils file
 from .utils import (
     ChatGPT_API,
     ChatGPT_API_async,
     ChatGPT_API_with_finish_reason,
     add_node_text,
-    generate_summaries_for_structure,
     add_preface_if_needed,
     convert_page_to_int,
     clean_page_numbers,
@@ -29,30 +29,119 @@ from .utils import (
     get_pdf_name,
     convert_physical_index_to_int,
     get_json_content,
-    config
+    config,
+    get_nodes  # Ensure this is imported or defined if utils.py has it
 )
+
+# If get_nodes is not in utils, we define it here locally to be safe
+def get_nodes_local(structure):
+    if isinstance(structure, dict):
+        sn = copy.deepcopy(structure)
+        sn.pop('nodes', None)
+        nodes = [sn]
+        for k in list(structure.keys()):
+            if 'nodes' in k: nodes.extend(get_nodes_local(structure[k]))
+        return nodes
+    elif isinstance(structure, list):
+        res = []
+        for i in structure: res.extend(get_nodes_local(i))
+        return res
+    return []
+
+################### Helper: Robustness Utils ###################
+def ensure_dict_result(data):
+    """
+    Robustness Helper:
+    Ensures that the data extracted from JSON is a dictionary.
+    LLMs sometimes return a list containing a single dict [ { ... } ] instead of just the dict { ... }.
+    """
+    if isinstance(data, list):
+        if len(data) > 0 and isinstance(data[0], dict):
+            return data[0]
+        return {} 
+    if isinstance(data, dict):
+        return data
+    return {}
 
 ################### Helper: Document Description ###################
 async def generate_document_description(page_list, model=None):
+    """
+    Generates a global description of the document.
+    ROBUSTNESS UPDATE: Limits input text size to prevent timeouts.
+    """
     intro_text = ""
-    for page in page_list[:3]:
+    # Use only first 2 pages or max 8000 chars to be safe for local LLMs
+    limit_pages = min(2, len(page_list))
+    for page in page_list[:limit_pages]:
         intro_text += page[0] + "\n"
+    
+    # Strict truncation
+    safe_text = intro_text[:8000]
     
     prompt = f"""
     You are an expert document analyst. Please provide a concise, high-level description of the following document. 
     Focus on the main topic, key themes, and purpose of the text.
     
     Document Start:
-    {intro_text[:4000]}
+    {safe_text}
     
-    Output format: Just the description paragraph.
+    Output format: Just the description paragraph text. No JSON, no markdown.
     """
     try:
+        # We use a slightly longer timeout implicitly via the utils retry logic
         description = await ChatGPT_API_async(model=model, prompt=prompt)
         return description.strip()
     except Exception as e:
         print(f"[Warning] Failed to generate doc description: {e}")
-        return ""
+        return "Description generation failed due to API error."
+
+################### Helper: Node Summaries ###################
+async def generate_summaries_for_structure(structure, model=None):
+    """
+    Generates summaries for each node in the structure.
+    ROBUSTNESS UPDATE: Uses Semaphore to limit concurrency.
+    """
+    # Use local get_nodes if not in utils, otherwise use imported
+    try:
+        from .utils import get_nodes
+        nodes = get_nodes(structure)
+    except ImportError:
+        nodes = get_nodes_local(structure)
+
+    # === CRITICAL FIX: CONCURRENCY CONTROL ===
+    # Limit to 3 concurrent requests to prevent overwhelming the local Intranet API.
+    # Increase this number only if your API is very fast/robust.
+    sem = asyncio.Semaphore(3) 
+
+    async def summarize_node(node):
+        text_content = node.get('text', '')
+        if not text_content: 
+            node['summary'] = ""
+            return
+        
+        # Truncate text for summary to avoid context overflow
+        # 3000 chars is usually enough for a summary
+        safe_content = text_content[:3000]
+        
+        prompt = f"Summarize the following section text in one concise sentence:\n\n{safe_content}"
+        
+        async with sem:
+            try:
+                summary = await ChatGPT_API_async(model, prompt)
+                node['summary'] = summary.strip()
+                # Optional: Simple print to show progress
+                # print(f"[DEBUG] Summarized node: {node.get('title', 'Unknown')[:20]}...")
+            except Exception as e:
+                print(f"[ERROR] Failed to summarize node {node.get('title')}: {e}")
+                node['summary'] = "Summary generation failed."
+
+    tasks = []
+    for node in nodes: 
+        tasks.append(summarize_node(node))
+    
+    if tasks: 
+        await asyncio.gather(*tasks)
+    return structure
 
 ################### Helper: Init Node Fields ###################
 def init_node_fields(structure):
@@ -98,6 +187,8 @@ async def check_title_appearance(item, page_list, start_index=1, model=None):
 
     response = await ChatGPT_API_async(model=model, prompt=prompt)
     response = extract_json(response)
+    response = ensure_dict_result(response)
+
     if 'answer' in response:
         answer = response['answer']
     else:
@@ -125,6 +216,8 @@ async def check_title_appearance_in_start(title, page_text, model=None, logger=N
 
     response = await ChatGPT_API_async(model=model, prompt=prompt)
     response = extract_json(response)
+    response = ensure_dict_result(response)
+    
     if logger:
         logger.info(f"Response: {response}")
     return response.get("start_begin", "no")
@@ -170,7 +263,9 @@ def toc_detector_single_page(content, model=None):
     Directly return the final JSON structure. Do not output anything else.
     Please note: abstract,summary, notation list, figure list, table list, etc. are not table of contents."""
     response = ChatGPT_API(model=model, prompt=prompt)
-    json_content = extract_json(response)    
+    json_content = extract_json(response)
+    json_content = ensure_dict_result(json_content)
+    
     return json_content.get('toc_detected', 'no')
 
 def check_if_toc_extraction_is_complete(content, toc, model=None):
@@ -182,6 +277,8 @@ def check_if_toc_extraction_is_complete(content, toc, model=None):
     prompt = prompt + '\n Document:\n' + content + '\n Table of contents:\n' + toc
     response = ChatGPT_API(model=model, prompt=prompt)
     json_content = extract_json(response)
+    json_content = ensure_dict_result(json_content)
+    
     return json_content.get('completed', 'no')
 
 def check_if_toc_transformation_is_complete(content, toc, model=None):
@@ -193,6 +290,8 @@ def check_if_toc_transformation_is_complete(content, toc, model=None):
     prompt = prompt + '\n Raw Table of contents:\n' + content + '\n Cleaned Table of contents:\n' + toc
     response = ChatGPT_API(model=model, prompt=prompt)
     json_content = extract_json(response)
+    json_content = ensure_dict_result(json_content)
+    
     return json_content.get('completed', 'no')
 
 def extract_toc_content(content, model=None):
@@ -222,13 +321,16 @@ def extract_toc_content(content, model=None):
 def detect_page_index(toc_content, model=None):
     print('start detect_page_index')
     prompt = f"""
-    You will be given a table of contents.
+    You will be given the table of contents.
     Your job is to detect if there are page numbers/indices given within the table of contents.
     Given text: {toc_content}
     Reply format: {{ "thinking": "...", "page_index_given_in_toc": "<yes or no>" }}
     Directly return the final JSON structure."""
+    
     response = ChatGPT_API(model=model, prompt=prompt)
     json_content = extract_json(response)
+    json_content = ensure_dict_result(json_content)
+    
     return json_content.get('page_index_given_in_toc', 'no')
 
 def toc_extractor(page_list, toc_page_list, model):
@@ -269,9 +371,12 @@ def toc_transformer(toc_content, model=None):
     if_complete = check_if_toc_transformation_is_complete(toc_content, last_complete, model)
     if if_complete == "yes" and finish_reason == "finished":
         last_complete = extract_json(last_complete)
+        last_complete = ensure_dict_result(last_complete)
+        
         if isinstance(last_complete, dict) and 'table_of_contents' in last_complete:
             cleaned_response=convert_page_to_int(last_complete['table_of_contents'])
             return cleaned_response
+            
     last_complete = get_json_content(last_complete)
     while not (if_complete == "yes" and finish_reason == "finished"):
         position = last_complete.rfind('}')
@@ -287,7 +392,8 @@ def toc_transformer(toc_content, model=None):
         if_complete = check_if_toc_transformation_is_complete(toc_content, last_complete, model)
     try:
         last_complete = json.loads(last_complete)
-        cleaned_response=convert_page_to_int(last_complete['table_of_contents'])
+        last_complete = ensure_dict_result(last_complete)
+        cleaned_response=convert_page_to_int(last_complete.get('table_of_contents', []))
         return cleaned_response
     except: return []
 
@@ -420,7 +526,7 @@ def generate_toc_continue(toc_content, part, model="gpt-4o-2024-11-20"):
     response, finish_reason = ChatGPT_API_with_finish_reason(model=model, prompt=prompt)
     if finish_reason == 'finished': return extract_json(response)
     
-    # === 关键修改：即使 finish_reason 是 failed，也返回空列表而不是崩溃，防止数据全部丢失 ===
+    # [Robustness] Handle incomplete/failed extraction
     print("[WARNING] generate_toc_continue failed to complete. Returning partial/empty.")
     return []
     
@@ -435,7 +541,6 @@ def generate_toc_init(part, model=None):
     response, finish_reason = ChatGPT_API_with_finish_reason(model=model, prompt=prompt)
     if finish_reason == 'finished': return extract_json(response)
     
-    # === 关键修改：同上，防止崩溃 ===
     print("[WARNING] generate_toc_init failed. Returning empty list.")
     return []
 
@@ -544,18 +649,19 @@ def check_toc(page_list, opt=None):
     else:
         print('toc found')
         toc_json = toc_extractor(page_list, toc_page_list, opt.model)
-        if toc_json['page_index_given_in_toc'] == 'yes':
+        
+        if isinstance(toc_json, dict) and toc_json.get('page_index_given_in_toc') == 'yes':
             print('index found')
             return {'toc_content': toc_json['toc_content'], 'toc_page_list': toc_page_list, 'page_index_given_in_toc': 'yes'}
         else:
             current_start_index = toc_page_list[-1] + 1
-            while (toc_json['page_index_given_in_toc'] == 'no' and 
+            while (isinstance(toc_json, dict) and toc_json.get('page_index_given_in_toc') == 'no' and 
                    current_start_index < len(page_list) and 
                    current_start_index < opt.toc_check_page_num):
                 additional_toc_pages = find_toc_pages(start_page_index=current_start_index, page_list=page_list, opt=opt)
                 if len(additional_toc_pages) == 0: break
                 additional_toc_json = toc_extractor(page_list, additional_toc_pages, opt.model)
-                if additional_toc_json['page_index_given_in_toc'] == 'yes':
+                if isinstance(additional_toc_json, dict) and additional_toc_json.get('page_index_given_in_toc') == 'yes':
                     print('index found')
                     return {'toc_content': additional_toc_json['toc_content'], 'toc_page_list': additional_toc_pages, 'page_index_given_in_toc': 'yes'}
                 else:
@@ -570,7 +676,9 @@ def single_toc_item_index_fixer(section_title, content, model="gpt-4o-2024-11-20
     Directly return the final JSON structure."""
     prompt = tob_extractor_prompt + '\nSection Title:\n' + str(section_title) + '\nDocument pages:\n' + content
     response = ChatGPT_API(model=model, prompt=prompt)
-    json_content = extract_json(response)    
+    json_content = extract_json(response)
+    json_content = ensure_dict_result(json_content)
+    
     return convert_physical_index_to_int([json_content])[0].get('physical_index')
 
 async def fix_incorrect_toc(toc_with_page_number, page_list, incorrect_results, start_index=1, model=None, logger=None):
@@ -787,16 +895,16 @@ def page_index_main(doc, opt=None):
             if opt.if_add_node_text == 'yes' or opt.if_add_node_summary == 'yes':
                 add_node_text(structure, page_list)
             
-            # 4. Add Summaries
+            # 4. Add Summaries (Robust Version)
             if opt.if_add_node_summary == 'yes':
-                print("Generating summaries... (this may take time)")
+                print("Generating summaries... (throttled for robust API usage)")
                 init_node_fields(structure)
                 try:
                     await generate_summaries_for_structure(structure, model=opt.model)
                 except Exception as e:
                     print(f"[ERROR] Summary generation failed: {e}")
 
-            # 5. Generate Document Description
+            # 5. Generate Document Description (Robust Version)
             if opt.if_add_doc_description == 'yes':
                  print("Generating document description...")
                  doc_description = await generate_document_description(page_list, model=opt.model)
@@ -812,7 +920,7 @@ def page_index_main(doc, opt=None):
             # 强制保存，防止白跑
             final_data = {
                 "doc_name": get_pdf_name(doc),
-                "doc_description": doc_description,
+                "doc_description": doc_description if doc_description else "Description failed or skipped.",
                 "structure": structure if structure else [{"title": "Extraction Failed / Empty", "nodes": []}]
             }
 
@@ -821,10 +929,12 @@ def page_index_main(doc, opt=None):
             full_save_path = os.path.join("results", f"{pdf_name}_{timestamp}.json")
             os.makedirs("results", exist_ok=True)
             
-            with open(full_save_path, 'w', encoding='utf-8-sig') as f:
-                json.dump(final_data, f, ensure_ascii=False, indent=2)
-            
-            print(f"\n[SUCCESS] Data Saved (Complete or Partial): {os.path.abspath(full_save_path)}")
+            try:
+                with open(full_save_path, 'w', encoding='utf-8-sig') as f:
+                    json.dump(final_data, f, ensure_ascii=False, indent=2)
+                print(f"\n[SUCCESS] Data Saved (Complete or Partial): {os.path.abspath(full_save_path)}")
+            except Exception as e:
+                print(f"[ERROR] Failed to save result file: {e}")
 
             if opt.if_add_node_text == 'no':
                  remove_structure_text(final_data['structure'])

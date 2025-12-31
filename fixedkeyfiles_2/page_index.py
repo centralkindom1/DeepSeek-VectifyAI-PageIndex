@@ -30,30 +30,31 @@ from .utils import (
     convert_physical_index_to_int,
     get_json_content,
     config,
-    get_nodes  # Ensure this is imported or defined if utils.py has it
+    get_nodes  # Ensure this is imported
 )
 
-# If get_nodes is not in utils, we define it here locally to be safe
-def get_nodes_local(structure):
-    if isinstance(structure, dict):
-        sn = copy.deepcopy(structure)
-        sn.pop('nodes', None)
-        nodes = [sn]
-        for k in list(structure.keys()):
-            if 'nodes' in k: nodes.extend(get_nodes_local(structure[k]))
-        return nodes
-    elif isinstance(structure, list):
-        res = []
-        for i in structure: res.extend(get_nodes_local(i))
-        return res
-    return []
+# === CRITICAL FIX: Reference-based node collector ===
+# Replaces get_nodes_local to ensure we modify the original structure in-place
+def collect_nodes_by_reference(structure):
+    """
+    Recursively collects references to all node dictionaries in the structure.
+    Does NOT use deepcopy, allowing in-place modifications (like adding summaries).
+    """
+    nodes = []
+    if isinstance(structure, list):
+        for item in structure:
+            nodes.extend(collect_nodes_by_reference(item))
+    elif isinstance(structure, dict):
+        nodes.append(structure)
+        if 'nodes' in structure:
+            nodes.extend(collect_nodes_by_reference(structure['nodes']))
+    return nodes
 
 ################### Helper: Robustness Utils ###################
 def ensure_dict_result(data):
     """
     Robustness Helper:
     Ensures that the data extracted from JSON is a dictionary.
-    LLMs sometimes return a list containing a single dict [ { ... } ] instead of just the dict { ... }.
     """
     if isinstance(data, list):
         if len(data) > 0 and isinstance(data[0], dict):
@@ -67,30 +68,47 @@ def ensure_dict_result(data):
 async def generate_document_description(page_list, model=None):
     """
     Generates a global description of the document.
-    ROBUSTNESS UPDATE: Limits input text size to prevent timeouts.
     """
     intro_text = ""
-    # Use only first 2 pages or max 8000 chars to be safe for local LLMs
+    # Limit to first 2 pages or max 6000 chars to be safe for local LLMs
     limit_pages = min(2, len(page_list))
     for page in page_list[:limit_pages]:
         intro_text += page[0] + "\n"
     
-    # Strict truncation
-    safe_text = intro_text[:8000]
+    safe_text = intro_text[:6000]
     
     prompt = f"""
     You are an expert document analyst. Please provide a concise, high-level description of the following document. 
     Focus on the main topic, key themes, and purpose of the text.
-    
+
     Document Start:
     {safe_text}
     
-    Output format: Just the description paragraph text. No JSON, no markdown.
+    IMPORTANT: You MUST return the result in the following JSON format:
+    {{
+        "description": "<your description paragraph here>"
+    }}
     """
     try:
-        # We use a slightly longer timeout implicitly via the utils retry logic
-        description = await ChatGPT_API_async(model=model, prompt=prompt)
-        return description.strip()
+        response_str = await ChatGPT_API_async(model=model, prompt=prompt)
+        
+        # Try to extract the JSON content
+        data = extract_json(response_str)
+        data = ensure_dict_result(data)
+        
+        # Robust Fallback: If JSON extraction failed, use the raw response 
+        # (cleaning up potential markdown code blocks)
+        result = data.get("description")
+        if not result:
+            result = response_str.replace("```json", "").replace("```", "").strip()
+            # If it still looks like JSON structure, try to parse it manually or just clean chars
+            if result.strip().startswith("{") and "description" in result:
+                 # Last ditch effort to clean stringified JSON
+                 import ast
+                 try: result = json.loads(result).get("description", result)
+                 except: pass
+        
+        return result if result else "Description generation failed."
     except Exception as e:
         print(f"[Warning] Failed to generate doc description: {e}")
         return "Description generation failed due to API error."
@@ -98,42 +116,65 @@ async def generate_document_description(page_list, model=None):
 ################### Helper: Node Summaries ###################
 async def generate_summaries_for_structure(structure, model=None):
     """
-    Generates summaries for each node in the structure.
-    ROBUSTNESS UPDATE: Uses Semaphore to limit concurrency.
+    Generates summaries for each node by modifying the structure IN-PLACE.
     """
-    # Use local get_nodes if not in utils, otherwise use imported
-    try:
-        from .utils import get_nodes
-        nodes = get_nodes(structure)
-    except ImportError:
-        nodes = get_nodes_local(structure)
+    # === CRITICAL FIX: Use reference collector instead of get_nodes/deepcopy ===
+    nodes = collect_nodes_by_reference(structure)
 
-    # === CRITICAL FIX: CONCURRENCY CONTROL ===
-    # Limit to 3 concurrent requests to prevent overwhelming the local Intranet API.
-    # Increase this number only if your API is very fast/robust.
-    sem = asyncio.Semaphore(3) 
+    # === CONCURRENCY CONTROL ===
+    # Set to 5-10 to balance speed and API rate limits
+    sem = asyncio.Semaphore(5) 
 
     async def summarize_node(node):
         text_content = node.get('text', '')
-        if not text_content: 
+        # Skip empty or too short text
+        if not text_content or len(text_content.strip()) < 10: 
             node['summary'] = ""
             return
         
-        # Truncate text for summary to avoid context overflow
-        # 3000 chars is usually enough for a summary
+        # Truncate text for summary to save tokens
         safe_content = text_content[:3000]
         
-        prompt = f"Summarize the following section text in one concise sentence:\n\n{safe_content}"
+        prompt = f"""
+        Task: Summarize the following academic/technical text into ONE concise English sentence.
+        
+        Text:
+        {safe_content}
+        
+        Output Requirement:
+        Return ONLY the JSON object. Do not add markdown blocks or explanations.
+        Format: {{ "summary": "<your summary here>" }}
+        """
         
         async with sem:
             try:
-                summary = await ChatGPT_API_async(model, prompt)
-                node['summary'] = summary.strip()
-                # Optional: Simple print to show progress
-                # print(f"[DEBUG] Summarized node: {node.get('title', 'Unknown')[:20]}...")
+                response_str = await ChatGPT_API_async(model, prompt)
+                
+                # 1. Try Standard Extraction
+                data = extract_json(response_str)
+                data = ensure_dict_result(data)
+                summary_text = data.get("summary", "")
+                
+                # 2. Aggressive Fallback (if JSON failed but we have text)
+                if not summary_text and response_str and "Error" not in response_str:
+                     # Remove common JSON markers to get the text content
+                     clean_raw = response_str.replace("```json", "").replace("```", "").strip()
+                     clean_raw = clean_raw.replace('{"summary":', "").replace("{'summary':", "")
+                     clean_raw = clean_raw.replace('"}', "").replace("'}", "")
+                     clean_raw = clean_raw.replace('{', "").replace('}', "")
+                     summary_text = clean_raw.strip('"').strip("'").strip()
+
+                node['summary'] = summary_text
+                
+                # Log success (shortened)
+                if summary_text:
+                    pass # Keep console clean, uncomment if needed: print(f"[INFO] Summarized: {node.get('title', 'Node')[:20]}...")
+                else:
+                    pass # print(f"[WARN] Empty summary for: {node.get('title')}")
+                
             except Exception as e:
                 print(f"[ERROR] Failed to summarize node {node.get('title')}: {e}")
-                node['summary'] = "Summary generation failed."
+                node['summary'] = ""
 
     tasks = []
     for node in nodes: 
@@ -143,7 +184,8 @@ async def generate_summaries_for_structure(structure, model=None):
         await asyncio.gather(*tasks)
     return structure
 
-################### Helper: Init Node Fields ###################
+################### (REMAINING LOGIC REMAINS UNCHANGED) ###################
+
 def init_node_fields(structure):
     if isinstance(structure, list):
         for item in structure:
@@ -154,41 +196,32 @@ def init_node_fields(structure):
         if 'nodes' in structure:
             init_node_fields(structure['nodes'])
 
-################### check title in page #########################################################
 async def check_title_appearance(item, page_list, start_index=1, model=None):    
     title = item['title']
-    
     if 'physical_index' not in item or item['physical_index'] is None:
         return {'list_index': item.get('list_index'), 'answer': 'no', 'title': title, 'page_number': None}
-    
     try:
         page_number = int(item['physical_index'])
     except (ValueError, TypeError):
         return {'list_index': item.get('list_index'), 'answer': 'no', 'title': title, 'page_number': None}
-    
     list_idx = page_number - start_index
     if list_idx < 0 or list_idx >= len(page_list):
         return {'list_index': item.get('list_index'), 'answer': 'no', 'title': title, 'page_number': page_number}
-
     page_text = page_list[list_idx][0]
-
     prompt = f"""
     Your job is to check if the given section appears or starts in the given page_text.
     Note: do fuzzy matching, ignore any space inconsistency in the page_text.
     The given section title is {title}.
     The given page_text is {page_text}.
-    
     Reply format:
     {{
         "thinking": <why do you think the section appears or starts in the page_text>
         "answer": "yes or no" (yes if the section appears or starts in the page_text, no otherwise)
     }}
     Directly return the final JSON structure. Do not output anything else."""
-
     response = await ChatGPT_API_async(model=model, prompt=prompt)
     response = extract_json(response)
     response = ensure_dict_result(response)
-
     if 'answer' in response:
         answer = response['answer']
     else:
@@ -201,23 +234,18 @@ async def check_title_appearance_in_start(title, page_text, model=None, logger=N
     Your job is to check if the current section starts in the beginning of the given page_text.
     If there are other contents before the current section title, then the current section does not start in the beginning of the given page_text.
     If the current section title is the first content in the given page_text, then the current section starts in the beginning of the given page_text.
-
     Note: do fuzzy matching, ignore any space inconsistency in the page_text.
-
     The given section title is {title}.
     The given page_text is {page_text}.
-    
     reply format:
     {{
         "thinking": <why do you think the section appears or starts in the page_text>
         "start_begin": "yes or no" (yes if the section starts in the beginning of the page_text, no otherwise)
     }}
     Directly return the final JSON structure. Do not output anything else."""
-
     response = await ChatGPT_API_async(model=model, prompt=prompt)
     response = extract_json(response)
     response = ensure_dict_result(response)
-    
     if logger:
         logger.info(f"Response: {response}")
     return response.get("start_begin", "no")
@@ -225,11 +253,9 @@ async def check_title_appearance_in_start(title, page_text, model=None, logger=N
 async def check_title_appearance_in_start_concurrent(structure, page_list, model=None, logger=None):
     if logger:
         logger.info("Checking title appearance in start concurrently")
-    
     for item in structure:
         if item.get('physical_index') is None:
             item['appear_start'] = 'no'
-
     tasks = []
     valid_items = []
     for item in structure:
@@ -239,7 +265,6 @@ async def check_title_appearance_in_start_concurrent(structure, page_list, model
                 page_text = page_list[idx - 1][0]
                 tasks.append(check_title_appearance_in_start(item['title'], page_text, model=model, logger=logger))
                 valid_items.append(item)
-
     results = await asyncio.gather(*tasks, return_exceptions=True)
     for item, result in zip(valid_items, results):
         if isinstance(result, Exception):
@@ -248,7 +273,6 @@ async def check_title_appearance_in_start_concurrent(structure, page_list, model
             item['appear_start'] = 'no'
         else:
             item['appear_start'] = result
-
     return structure
 
 def toc_detector_single_page(content, model=None):
@@ -265,7 +289,6 @@ def toc_detector_single_page(content, model=None):
     response = ChatGPT_API(model=model, prompt=prompt)
     json_content = extract_json(response)
     json_content = ensure_dict_result(json_content)
-    
     return json_content.get('toc_detected', 'no')
 
 def check_if_toc_extraction_is_complete(content, toc, model=None):
@@ -278,7 +301,6 @@ def check_if_toc_extraction_is_complete(content, toc, model=None):
     response = ChatGPT_API(model=model, prompt=prompt)
     json_content = extract_json(response)
     json_content = ensure_dict_result(json_content)
-    
     return json_content.get('completed', 'no')
 
 def check_if_toc_transformation_is_complete(content, toc, model=None):
@@ -291,7 +313,6 @@ def check_if_toc_transformation_is_complete(content, toc, model=None):
     response = ChatGPT_API(model=model, prompt=prompt)
     json_content = extract_json(response)
     json_content = ensure_dict_result(json_content)
-    
     return json_content.get('completed', 'no')
 
 def extract_toc_content(content, model=None):
@@ -303,7 +324,6 @@ def extract_toc_content(content, model=None):
     if_complete = check_if_toc_transformation_is_complete(content, response, model)
     if if_complete == "yes" and finish_reason == "finished":
         return response
-    
     chat_history = [{"role": "user", "content": prompt}, {"role": "assistant", "content": response}]
     prompt = f"""please continue the generation of table of contents , directly output the remaining part of the structure"""
     new_response, finish_reason = ChatGPT_API_with_finish_reason(model=model, prompt=prompt, chat_history=chat_history)
@@ -326,11 +346,9 @@ def detect_page_index(toc_content, model=None):
     Given text: {toc_content}
     Reply format: {{ "thinking": "...", "page_index_given_in_toc": "<yes or no>" }}
     Directly return the final JSON structure."""
-    
     response = ChatGPT_API(model=model, prompt=prompt)
     json_content = extract_json(response)
     json_content = ensure_dict_result(json_content)
-    
     return json_content.get('page_index_given_in_toc', 'no')
 
 def toc_extractor(page_list, toc_page_list, model):
@@ -372,11 +390,9 @@ def toc_transformer(toc_content, model=None):
     if if_complete == "yes" and finish_reason == "finished":
         last_complete = extract_json(last_complete)
         last_complete = ensure_dict_result(last_complete)
-        
         if isinstance(last_complete, dict) and 'table_of_contents' in last_complete:
             cleaned_response=convert_page_to_int(last_complete['table_of_contents'])
             return cleaned_response
-            
     last_complete = get_json_content(last_complete)
     while not (if_complete == "yes" and finish_reason == "finished"):
         position = last_complete.rfind('}')
@@ -525,8 +541,6 @@ def generate_toc_continue(toc_content, part, model="gpt-4o-2024-11-20"):
     
     response, finish_reason = ChatGPT_API_with_finish_reason(model=model, prompt=prompt)
     if finish_reason == 'finished': return extract_json(response)
-    
-    # [Robustness] Handle incomplete/failed extraction
     print("[WARNING] generate_toc_continue failed to complete. Returning partial/empty.")
     return []
     
@@ -540,7 +554,6 @@ def generate_toc_init(part, model=None):
     prompt = prompt + '\nGiven text\n:' + part
     response, finish_reason = ChatGPT_API_with_finish_reason(model=model, prompt=prompt)
     if finish_reason == 'finished': return extract_json(response)
-    
     print("[WARNING] generate_toc_init failed. Returning empty list.")
     return []
 
@@ -553,17 +566,12 @@ def process_no_toc(page_list, start_index=1, model=None, logger=None):
         token_lengths.append(count_tokens(page_text, model))
     group_texts = page_list_to_group_text(page_contents, token_lengths)
     if logger: logger.info(f'len(group_texts): {len(group_texts)}')
-    
-    # 处理第一部分
     toc_with_page_number = generate_toc_init(group_texts[0], model)
     if not isinstance(toc_with_page_number, list): toc_with_page_number = []
-
-    # 处理后续部分
     for group_text in group_texts[1:]:
         toc_with_page_number_additional = generate_toc_continue(toc_with_page_number, group_text, model)    
         if isinstance(toc_with_page_number_additional, list):
             toc_with_page_number.extend(toc_with_page_number_additional)
-            
     if logger: logger.info(f'generate_toc: {toc_with_page_number}')
     toc_with_page_number = convert_physical_index_to_int(toc_with_page_number)
     if logger: logger.info(f'convert_physical_index_to_int: {toc_with_page_number}')
@@ -678,7 +686,6 @@ def single_toc_item_index_fixer(section_title, content, model="gpt-4o-2024-11-20
     response = ChatGPT_API(model=model, prompt=prompt)
     json_content = extract_json(response)
     json_content = ensure_dict_result(json_content)
-    
     return convert_physical_index_to_int([json_content])[0].get('physical_index')
 
 async def fix_incorrect_toc(toc_with_page_number, page_list, incorrect_results, start_index=1, model=None, logger=None):
@@ -871,7 +878,6 @@ def page_index_main(doc, opt=None):
     print('Parsing PDF...')
     page_list = get_page_tokens(doc)
     
-    # 检查是否成功读取
     if not page_list:
         print("[CRITICAL] No text extracted from PDF. Check if pdfplumber is installed and file is valid.")
         return {"error": "PDF extraction failed"}
@@ -895,16 +901,17 @@ def page_index_main(doc, opt=None):
             if opt.if_add_node_text == 'yes' or opt.if_add_node_summary == 'yes':
                 add_node_text(structure, page_list)
             
-            # 4. Add Summaries (Robust Version)
+            # 4. Add Summaries (Robust Version + JSON FORCE)
             if opt.if_add_node_summary == 'yes':
-                print("Generating summaries... (throttled for robust API usage)")
+                print("Generating summaries... (throttled & JSON-forced for robust API usage)")
                 init_node_fields(structure)
                 try:
+                    # UPDATED to use the fixed in-place function
                     await generate_summaries_for_structure(structure, model=opt.model)
                 except Exception as e:
                     print(f"[ERROR] Summary generation failed: {e}")
 
-            # 5. Generate Document Description (Robust Version)
+            # 5. Generate Document Description (Robust Version + JSON FORCE)
             if opt.if_add_doc_description == 'yes':
                  print("Generating document description...")
                  doc_description = await generate_document_description(page_list, model=opt.model)
@@ -917,7 +924,6 @@ def page_index_main(doc, opt=None):
         
         finally:
             # === EMERGENCY SAVE BLOCK ===
-            # 强制保存，防止白跑
             final_data = {
                 "doc_name": get_pdf_name(doc),
                 "doc_description": doc_description if doc_description else "Description failed or skipped.",

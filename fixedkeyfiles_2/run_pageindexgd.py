@@ -4,6 +4,15 @@ import sys
 import json
 import asyncio
 
+# === 【关键修改】强制标准输出使用 UTF-8 编码 ===
+# 这行代码解决了 GUI 接收到的 stdout 数据乱码问题，
+# 也解决了控制台打印中文报错的问题 (UnicodeEncodeError)。
+if sys.stdout:
+    sys.stdout.reconfigure(encoding='utf-8')
+if sys.stderr:
+    sys.stderr.reconfigure(encoding='utf-8')
+# ============================================
+
 # Ensure the script can find the 'pageindex' package in the current directory
 sys.path.append(os.path.dirname(os.path.abspath(__file__)))
 
@@ -45,8 +54,12 @@ def main():
         # The result will now be a dictionary containing {doc_name, doc_description, structure}
         result = page_index_main(doc=args.pdf_path, opt=opt)
         
-        # Output the result as JSON (useful for piping to other tools or GUI capture)
-        print(json.dumps(result, ensure_ascii=False, indent=2))
+        # === FIX: Disable Printing Massive JSON to Console ===
+        # The GUI reads the console output (stdout). Printing thousands of lines of JSON 
+        # buries the [SUCCESS] message and makes the log window unusable.
+        # The file is already saved to disk by page_index_main.
+        
+        # print(json.dumps(result, ensure_ascii=False, indent=2)) 
         
     except Exception as e:
         print(f"[ERROR] Failed to process PDF: {str(e)}")

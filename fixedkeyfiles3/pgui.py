@@ -47,7 +47,7 @@ for k in ['HTTP_PROXY', 'HTTPS_PROXY', 'http_proxy', 'https_proxy']:
 # 2. API 配置 (从 utils.py 提取)
 # 注意：这里使用的是 utils.py 中的 Key 和 内网 URL
 API_KEY = "your api key"
-# utils.py 中使用的是 aiplus.airchina.com.cn:18080
+
 BASE_URL = "https://www.deepseek.com:18080/v1" 
 
 def log(msg, level="INFO"):
@@ -714,4 +714,5 @@ if __name__ == "__main__":
     app.setStyle('Fusion')
     main = MainWindow()
     main.show()
+
     sys.exit(app.exec_())

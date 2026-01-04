@@ -1,1 +1,2 @@
 from existing json further parse to json good for vecotor, i.e. good for LLM RAG embeding.
+for detail see file package of fixedkeyfiles3.

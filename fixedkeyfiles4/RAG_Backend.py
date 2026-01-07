@@ -20,18 +20,18 @@ urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 os.environ['CURL_CA_BUNDLE'] = ''
 
 # API 配置 (硬编码 Key)
-API_KEY = "sk-fXM4W0CdcKnNp3NVDfF85f2b90284b11AfDdF9F5627f627b"
+API_KEY = "YOUR API KEY"
 
 # 1. Embedding API
-EMBEDDING_API_URL = "https://aiplus.airchina.com.cn:18080/v1/embeddings" 
+EMBEDDING_API_URL = "https://WWW.BGE.COM/v1/embeddings" 
 EMBEDDING_MODEL_NAME = "bge-m3"
 
 # 2. Rerank API
-RERANK_API_URL = "https://aiplus.airchina.com.cn:18080/v1/rerank" 
+RERANK_API_URL = "https://WWW.BGE.COM/v1/rerank" 
 RERANK_MODEL_NAME = "bge-reranker-v2-m3"
 
 # 3. DeepSeek API (Chat Completion)
-DEEPSEEK_API_URL = "https://aiplus.airchina.com.cn:18080/v1/chat/completions"
+DEEPSEEK_API_URL = "https://WWW.DEEPSEEK.COM/v1/chat/completions"
 DEEPSEEK_R1_MODEL_NAME = "DeepSeek-R1"
 DEEPSEEK_V3_MODEL_NAME = "DeepSeek-V3"
 
@@ -675,4 +675,5 @@ Content:
             self.log(f"❌ 严重错误: {str(e)}")
             import traceback
             self.log(traceback.format_exc())
+
             self.finish_signal.emit(False)

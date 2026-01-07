@@ -45,7 +45,7 @@ for k in ['HTTP_PROXY', 'HTTPS_PROXY', 'http_proxy', 'https_proxy']:
     os.environ.pop(k, None)
 
 # 2. API 配置 (保持内网配置)
-API_KEY = ""
+API_KEY = "YOUR API KEY"
 BASE_URL = "https://WWW.DEEPSEEK.COM18080/v1" 
 
 # ================= PROMPTS =================
@@ -780,3 +780,4 @@ if __name__ == "__main__":
     main.show()
 
     sys.exit(app.exec_())
+

@@ -22,11 +22,10 @@ except ImportError:
 CONFIG_FILE = "gui_configs.json"
 
 # ==================================================================================
-# [后端逻辑脚本模板 - 2026-01-06 零丢失最终版]
-# 修复策略: "语义外壳 + 原始内核"
-# 1. [Fix Summary] 不再要求 LLM 重写数据，防止出现“例如...”导致的丢弃。
-# 2. [Fix Loss] 代码强制将 raw_content 拼接到 embedding_text 末尾，确保 JMU-PKX 物理存在。
-# 3. [Fix JSON] 增强了 JSON 提取的鲁棒性，处理 LLM 偶尔不返回标准 JSON 的情况。
+# [后端逻辑脚本模板 - 2026-01-07 修复版]
+# 修复日志:
+# 1. [Fix Visual] 恢复 DEBUG_AI_CHAR 输出，确保前端能看到打字机效果。
+# 2. [Feature] 接收 --strategy 参数，为后续不同模式的 Prompt 调整预留接口。
 # ==================================================================================
 VECTOR_GEN_SCRIPT = r'''
 import sys
@@ -49,7 +48,7 @@ for k in ['HTTP_PROXY', 'HTTPS_PROXY', 'http_proxy', 'https_proxy']:
 API_KEY = "YOUR API KEY"
 BASE_URL = "https://www.deepseek.com:18080/v1" 
 
-# ================= PROMPTS (LOSSLESS STRATEGY) =================
+# ================= PROMPTS =================
 SYSTEM_PROMPT = """你是一个高精度的元数据分析师。你的任务是分析给定的文档片段，并生成一段简短的、富含上下文的“语义导语”。
 
 【注意】
@@ -155,7 +154,8 @@ def call_llm_api(system_prompt, user_prompt, model_name):
                             content = chunk["choices"][0]["delta"].get("content", "")
                             if content:
                                 full_content += content
-                                # print(f"DEBUG_AI_CHAR:{content}", flush=True) # 减少日志输出，防止卡顿
+                                # === [FIX] 恢复可视化输出 ===
+                                print(f"DEBUG_AI_CHAR:{content}", flush=True) 
                     except: pass
         return full_content
     except Exception as e:
@@ -167,9 +167,10 @@ def main():
     parser.add_argument("--input", required=True)
     parser.add_argument("--output", required=True)
     parser.add_argument("--model", required=True)
+    parser.add_argument("--strategy", type=int, default=0) # 0: Lossless, 1: Semantic, 2: Mixed
     args = parser.parse_args()
 
-    log(f"Starting Lossless Vector Generation...", "INFO")
+    log(f"Starting Vector Gen (Strategy Mode: {args.strategy})...", "INFO")
     if not os.path.exists(args.input):
         log(f"Input file not found: {args.input}", "ERROR")
         return
@@ -196,7 +197,7 @@ def main():
             content = node.get("text", node.get("content", ""))
             node_id = node.get("node_id", f"{processed_count:04d}")
             
-            # 1. 过滤逻辑：只保留有实际内容的节点，或者有子节点的容器节点
+            # 1. 过滤逻辑
             has_children = "nodes" in node and isinstance(node["nodes"], list) and len(node["nodes"]) > 0
             if (not content or len(content.strip()) < 10) and not has_children:
                 continue
@@ -214,41 +215,46 @@ def main():
             
             log(f"Processing Node {node_id}: {path[-1][:30]}...", "INFO")
             
-            # 3. 调用 LLM 生成元数据（只生成导语，不生成全文）
+            # 3. 调用 LLM
             response_text = call_llm_api(SYSTEM_PROMPT, prompt, args.model)
             
             # 4. 解析结果
             vector_obj = extract_json_robust(response_text)
             if not vector_obj:
-                # Fallback: 如果解析失败，手动构建简单的对象
                 vector_obj = {
                     "semantic_intro": f"这是文档 {doc_title} 中章节 {path_str} 的数据内容。",
                     "section_hint": "数据片段"
                 }
                 log(f"JSON Parse Failed for {node_id}, using fallback.", "WARN")
 
-            # 5. [核心修复] 构造最终的 embedding_text
-            # 格式：[语义导语] + [换行] + [原始数据]
-            # 这样保证了 100% 的数据召回率
+            # 5. [核心] 策略分支
+            # Strategy 0: Data Lossless (强制拼接原文) - 默认推荐
+            # Strategy 1: Policy/Doc (仅保留 LLM 总结)
             semantic_intro = vector_obj.get("semantic_intro", "")
             raw_data_block = content.strip()
             
-            # 如果是容器节点（没内容但有子节点），我们不需要拼 raw_content，只需要导语
-            if not raw_data_block and has_children:
-                 final_text = f"{semantic_intro}\n(包含子章节数据)"
-            else:
-                 final_text = f"{semantic_intro}\n\n【原始数据内容】:\n{raw_data_block}"
+            if args.strategy == 0: # 数据无损模式 (Table/Schedule)
+                if not raw_data_block and has_children:
+                     final_text = f"{semantic_intro}\n(包含子章节数据)"
+                else:
+                     final_text = f"{semantic_intro}\n\n【原始数据内容】:\n{raw_data_block}"
+            
+            elif args.strategy == 1: # 公文语义总结 (Policy/Doc) - 可能会丢失细节
+                final_text = semantic_intro
+            
+            else: # 混合模式 (保留原文但更简洁)
+                 final_text = f"{semantic_intro}\n\n[Reference Data]:\n{raw_data_block}"
 
-            # 6. 组装最终 JSON 对象
             final_item = {
-                "embedding_text": final_text, # 包含 raw content
+                "embedding_text": final_text, 
                 "section_hint": vector_obj.get("section_hint", "General"),
                 "metadata": {
                     "doc_title": doc_title,
                     "section_id": node_id,
                     "section_path": path,
                     "depth": depth,
-                    "original_length": len(content)
+                    "original_length": len(content),
+                    "strategy": args.strategy
                 },
                 "original_snippet": content[:500] 
             }
@@ -609,6 +615,13 @@ class MainWindow(QMainWindow):
         
         opts_layout.addWidget(QLabel("SUMMARIZER MODEL:"))
         opts_layout.addWidget(self.combo_vector_model, 1)
+        
+        # [修复] 将策略选择框代码移动到 opts_layout 定义之后
+        self.combo_strategy = QComboBox()
+        self.combo_strategy.addItems(["数据无损模式 (Table/Schedule)", "公文语义总结 (Policy/Doc)", "标准混合模式"])
+        opts_layout.addWidget(QLabel("处理策略:"))
+        opts_layout.addWidget(self.combo_strategy, 1)
+        
         layout.addLayout(opts_layout)
 
         # 4. Action Button
@@ -729,6 +742,8 @@ class MainWindow(QMainWindow):
         in_path = self.edit_json_path.text()
         out_path = self.edit_export_path.text()
         model = self.combo_vector_model.currentText()
+        # 获取策略索引
+        strategy_idx = self.combo_strategy.currentIndex()
         
         if not in_path or not os.path.exists(in_path):
              QMessageBox.warning(self, "Error", "Invalid Input JSON path.")
@@ -744,9 +759,9 @@ class MainWindow(QMainWindow):
 
         self.txt_console.append(f"<br><span style='color:#79c0ff; font-weight:bold;'>[VECTOR JOB] Initializing Vector Transformation Subprocess...</span>")
         
-        # 2. 构造 subprocess 命令 (模仿 pguiback.py)
+        # 2. 构造 subprocess 命令 (增加 --strategy 参数)
         py_exe = sys.executable
-        cmd = f'"{py_exe}" -u run_vector_gen.py --input "{in_path}" --output "{out_path}" --model "{model}"'
+        cmd = f'"{py_exe}" -u run_vector_gen.py --input "{in_path}" --output "{out_path}" --model "{model}" --strategy {strategy_idx}'
         
         # 3. 使用 WorkerThread 执行
         self.vector_worker = WorkerThread(cmd)

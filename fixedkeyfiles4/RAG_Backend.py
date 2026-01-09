@@ -10,9 +10,10 @@ import re
 import hashlib
 import jieba
 import jieba.posseg as pseg
+from collections import defaultdict
 
-# PyQt Core 组件用于线程和信号，虽然是后端逻辑，但为了保持原有的异步架构
-from PyQt5.QtCore import QThread, pyqtSignal
+# PyQt Core 组件用于线程和信号
+from PyQt5.QtCore import QThread, pyqtSignal, QMutex, QMutexLocker
 
 # ================= 配置与环境 =================
 # 禁用 HTTPS 警告 (Win7/内网适配)
@@ -20,19 +21,19 @@ urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 os.environ['CURL_CA_BUNDLE'] = ''
 
 # API 配置 (硬编码 Key)
-API_KEY = "YOUR API KEY"
+API_KEY = ""
 
 # 1. Embedding API
-EMBEDDING_API_URL = "https://WWW.BGE.COM/v1/embeddings" 
+EMBEDDING_API_URL = "https://:18080/v1/embeddings" 
 EMBEDDING_MODEL_NAME = "bge-m3"
 
 # 2. Rerank API
-RERANK_API_URL = "https://WWW.BGE.COM/v1/rerank" 
+RERANK_API_URL = "https://.cn:18080/v1/rerank" 
 RERANK_MODEL_NAME = "bge-reranker-v2-m3"
 
-# 3. DeepSeek API (Chat Completion)
-DEEPSEEK_API_URL = "https://WWW.DEEPSEEK.COM/v1/chat/completions"
-DEEPSEEK_R1_MODEL_NAME = "DeepSeek-R1"
+# 3. DeepSeek/LLM API (Chat Completion)
+DEEPSEEK_API_URL = "https://18080/v1/chat/completions"
+# 模型名称常量 (仅作参考，实际使用前端传入的值)
 DEEPSEEK_V3_MODEL_NAME = "DeepSeek-V3"
 
 # ================= System Prompts =================
@@ -58,7 +59,8 @@ REWRITE_SYSTEM_PROMPT = """你是一个工业级 RAG 系统中的「Query Rewrit
 - 输出长度建议为 1 句话，最多不超过 2 句话
 - 不要加入任何格式符号（如列表、引号、编号）"""
 
-DEEPSEEK_R1_SYSTEM_PROMPT = """🎯【角色定义】
+# 基础 R1 Prompt，后续代码中会动态插入 Doc Type 约束
+DEEPSEEK_R1_BASE_PROMPT = """🎯【角色定义】
 你是一个 RAG Final Answer Composer（检索增强生成的最终答案生成器）。
 你的任务 不是检索、不是排序、不是猜测，而是：
 严格基于已提供的召回结果，对用户问题生成最终、可读、准确的回答。
@@ -116,15 +118,24 @@ def cosine_similarity(vec1, vec2):
 
 def get_text_hash(text):
     """生成文本的 SHA256 哈希，用于严格去重"""
-    return hashlib.sha256(text.encode('utf-8')).hexdigest()
+    # 移除首尾空格并转小写，确保鲁棒性
+    clean_text = text.strip().lower()
+    return hashlib.sha256(clean_text.encode('utf-8')).hexdigest()
 
-def extract_keywords_with_jieba(query, top_n=5):
+def extract_keywords_with_jieba(query, stopwords=None, top_n=5):
     """
     使用 jieba 提取关键词，优先保留名词 (n)、英文 (eng) 和 动词 (v)
+    并支持 Stopwords 过滤
     """
     if not jieba:
         return query.split() # Fallback
     
+    # 预处理 stopwords set
+    stop_set = set()
+    if stopwords:
+        for sw in stopwords:
+            stop_set.add(sw.strip().lower())
+
     words = pseg.cut(query)
     keywords = []
     
@@ -132,8 +143,11 @@ def extract_keywords_with_jieba(query, top_n=5):
     for w in words:
         word = w.word.strip()
         flag = w.flag
-        if len(word) < 2: continue # 跳过单字
         
+        # 基础过滤：长度小于2 或 在停用词表中
+        if len(word) < 2: continue 
+        if word.lower() in stop_set: continue
+
         if flag.startswith('n') or flag == 'eng': # 名词或英文 (如 PKX, JMU)
             keywords.append((word, 3))
         elif flag.startswith('v'): # 动词
@@ -151,6 +165,13 @@ def extract_keywords_with_jieba(query, top_n=5):
             seen.add(k)
             
     return result[:top_n]
+
+def is_precise_intent(query):
+    """
+    动态路由逻辑：检测是否包含大写字母+数字的组合（如 CA1234, B737 等）
+    """
+    pattern = r'[A-Z]{2,3}\d{3,4}'
+    return bool(re.search(pattern, query))
 
 # ================= PageIndex Loader =================
 class PageIndexLoader:
@@ -210,6 +231,10 @@ class JsonHardQueryWorker(QThread):
         super().__init__()
         self.json_path = json_path
         self.keywords = keywords
+        self._is_interrupted = False
+
+    def stop(self):
+        self._is_interrupted = True
 
     def run(self):
         if not self.json_path or not os.path.exists(self.json_path) or not self.keywords:
@@ -221,9 +246,13 @@ class JsonHardQueryWorker(QThread):
             with open(self.json_path, 'r', encoding='utf-8-sig') as f:
                 data = json.load(f)
             
+            if self._is_interrupted: return 
+
             structure = data.get("structure", []) if isinstance(data, dict) else data
             
             def traverse_search(node, path_stack):
+                if self._is_interrupted: return
+
                 current_title = node.get("title", "未命名章节")
                 current_text = node.get("text", "")
                 node_id = str(node.get("node_id", "unknown"))
@@ -238,6 +267,7 @@ class JsonHardQueryWorker(QThread):
                 if hit_count > 0:
                     if len(current_text) > 10:
                         path_str = " > ".join(current_path)
+                        # 这里依然保留基础分计算，但后续 Fusion 会忽略它
                         score = 10.0 + (hit_count * 2.0)
                         
                         results.append({
@@ -245,6 +275,7 @@ class JsonHardQueryWorker(QThread):
                             "content": current_text,
                             "path": path_str,
                             "score": score,
+                            "hit_count": hit_count, # 记录命中数供后续分析
                             "source": "JSON_Source" 
                         })
 
@@ -253,32 +284,55 @@ class JsonHardQueryWorker(QThread):
                         traverse_search(child, current_path)
 
             for item in structure:
+                if self._is_interrupted: break
                 traverse_search(item, [])
             
+            if self._is_interrupted:
+                self.finished_signal.emit([], "JSON 查询已中断")
+                return
+
+            # 简单按照命中数预排序
             results.sort(key=lambda x: x['score'], reverse=True)
-            top_results = results[:15]
+            top_results = results[:20] # 取前20做候选
             
             self.finished_signal.emit(top_results, f"JSON 原文检索命中: {len(top_results)} 条 (关键词: {self.keywords})")
             
         except Exception as e:
             self.finished_signal.emit([], f"JSON 查询异常: {str(e)}")
 
-# ================= 工作线程：工业级鲁棒召回 + DeepSeek V3/R1 =================
+# ================= Worker: Recall + RRF Fusion =================
 class RecallWorker(QThread):
     log_signal = pyqtSignal(str)          
     result_signal = pyqtSignal(list)      
     summary_signal = pyqtSignal(str)      
     finish_signal = pyqtSignal(bool)      
 
-    def __init__(self, query_text, db_path, json_path, enable_json_search=False):
+    def __init__(self, query_text, db_path, json_path, search_mode="smart", summary_model="DeepSeek-R1", 
+                 doc_type="不指定类型", stopwords=None):
         super().__init__()
         self.original_query = query_text 
         self.search_query = query_text   
         self.db_path = db_path
         self.json_path = json_path
-        self.enable_json_search = enable_json_search 
+        self.search_mode = search_mode # smart, precise, fuzzy
+        self.summary_model = summary_model # DeepSeek-R1, X1-70B-thinking, etc.
+        self.doc_type = doc_type # Feature: Document Type
+        self.stopwords = stopwords if stopwords else [] # Feature: Stopwords
+        
         self.page_index = PageIndexLoader()
         self.json_search_results = [] 
+        
+        # 中断控制
+        self._is_interrupted = False
+        self._json_worker = None
+
+    def stop(self):
+        """外部调用以停止任务"""
+        self.log("🛑 收到停止指令，正在中断任务...")
+        self._is_interrupted = True
+        if self._json_worker:
+            self._json_worker.stop()
+            self._json_worker.wait(100) # 尝试等待一下子线程
 
     def log(self, msg):
         timestamp = time.strftime("%H:%M:%S")
@@ -290,15 +344,27 @@ class RecallWorker(QThread):
 
     # --- Step 0: Query Rewrite (DeepSeek V3) ---
     def rewrite_query(self, original_query):
-        self.log(f"🧠 正在请求 DeepSeek-V3 进行语义重写...")
+        if self._is_interrupted: return None
+
+        # 模糊模式下强制重写，精确模式下跳过重写以保持精准
+        if self.search_mode == "precise":
+            self.log("⏩ 精准模式：跳过查询重写")
+            return original_query
+
+        self.log(f"🧠 正在请求 DeepSeek-V3 进行语义重写 (类型偏好: {self.doc_type})...")
         
+        # 【Feature】注入 doc_type 到用户提示
+        doc_type_hint = ""
+        if self.doc_type and self.doc_type != "不指定类型":
+            doc_type_hint = f"\n\n[Important Context]: The user explicitly expects content from document type: '{self.doc_type}'. Please refine the query to imply this context."
+
         headers = { 'Content-Type': 'application/json', 'Authorization': f'Bearer {API_KEY}' }
         messages = [
             {"role": "system", "content": REWRITE_SYSTEM_PROMPT},
-            {"role": "user", "content": f"用户查询：\n{original_query}\n\n请输出重写后的查询："}
+            {"role": "user", "content": f"用户查询：\n{original_query}{doc_type_hint}\n\n请输出重写后的查询："}
         ]
         payload = {
-            "model": DEEPSEEK_V3_MODEL_NAME,
+            "model": DEEPSEEK_V3_MODEL_NAME, # Rewrite 总是用 V3 以保证速度
             "messages": messages,
             "temperature": 0.7, 
             "stream": False     
@@ -306,6 +372,8 @@ class RecallWorker(QThread):
 
         try:
             start_time = time.time()
+            if self._is_interrupted: return None
+            
             response = requests.post(DEEPSEEK_API_URL, headers=headers, json=payload, verify=False, timeout=15)
             
             if response.status_code == 200:
@@ -326,6 +394,7 @@ class RecallWorker(QThread):
 
     # --- Step 1: Embedding ---
     def get_remote_embedding(self, text):
+        if self._is_interrupted: return None
         self.log(f"📡 正在计算向量 Embedding: {text[:30]}...")
         headers = { 'Content-Type': 'application/json', 'Authorization': f'Bearer {API_KEY}' }
         payload = { "model": EMBEDDING_MODEL_NAME, "input": [text] }
@@ -342,18 +411,31 @@ class RecallWorker(QThread):
 
     # --- Step 2: Rerank API ---
     def rerank_with_bge(self, query, candidates_text_list):
+        if not candidates_text_list or self._is_interrupted:
+            return []
+        
+        # 【Feature】虽然 BGE Rerank API 通常只接受 query，但为了实现“软约束”，
+        # 我们将类型意图拼接到 Query 中，让语义模型感知到偏好。
+        rerank_query = query
+        if self.doc_type and self.doc_type != "不指定类型":
+            rerank_query = f"{query} (Prefer document type: {self.doc_type})"
+            self.log(f"⚖️ Reranker 使用增强 Query: {rerank_query}")
+
         self.log(f"⚖️ Reranker ({RERANK_MODEL_NAME}) 正在重排 {len(candidates_text_list)} 条数据...")
         headers = { 'Content-Type': 'application/json', 'Authorization': f'Bearer {API_KEY}' }
         
         payload = {
             "model": RERANK_MODEL_NAME,
-            "query": query, 
+            "query": rerank_query, 
             "documents": candidates_text_list 
         }
 
         try:
             start_time = time.time()
-            response = requests.post(RERANK_API_URL, headers=headers, json=payload, verify=False, timeout=30)
+            if self._is_interrupted: return None
+            
+            # ================= 修复核心：增加超时时间到 120s =================
+            response = requests.post(RERANK_API_URL, headers=headers, json=payload, verify=False, timeout=120)
             
             if response.status_code == 200:
                 data = response.json()
@@ -367,9 +449,6 @@ class RecallWorker(QThread):
                             scores[idx] = score
                 elif isinstance(data, list):
                      scores = data
-                else:
-                    self.log("⚠️ Reranker 返回格式未知，降级处理。")
-                    return None
 
                 self.log(f"✅ Reranker 完成，耗时: {time.time() - start_time:.2f}s")
                 return scores
@@ -380,35 +459,32 @@ class RecallWorker(QThread):
             self.log(f"⚠️ Reranker 调用异常: {str(e)}")
             return None
 
-    # --- Step 3: 规则裁决 ---
-    def apply_industrial_rules(self, query, path_str, original_score):
-        q_lower = query.lower()
-        p_lower = path_str.lower()
-        final_adj_score = original_score
-
-        technical_terms = ["train", "optimi", "loss", "layer", "struct", "arch"]
-        if any(t in q_lower for t in technical_terms):
-            negative_sections = ["introduction", "background", "preface", "motivation", "overview", "why", "related work"]
-            for neg in negative_sections:
-                if neg in p_lower:
-                    final_adj_score -= 3.0 
-                    break
-            if "train" in q_lower and "train" in p_lower:
-                final_adj_score += 1.0
-        
-        return final_adj_score
-
-    # --- Step 4: DeepSeek R1 Summary (流式) ---
+    # --- Step 4: LLM Summary (流式 + Multi-Model 支持) ---
     def call_deepseek_summary(self, user_original_query, top_results):
-        self.log("🧠 正在请求 DeepSeek-R1 生成最终回答 (Stream=True)...")
-        self.summary_signal.emit("> 🚀 **DeepSeek-R1 已连接，准备生成...**\n\n")
+        if self._is_interrupted: return
+
+        target_model = self.summary_model 
+        self.log(f"🧠 正在请求 {target_model} 生成最终回答 (Stream=True)...")
+        self.summary_signal.emit(f"> 🚀 **{target_model} 已连接，准备生成...**\n\n")
+
+        # 【Feature】根据 Doc Type 动态注入 System Prompt
+        current_system_prompt = DEEPSEEK_R1_BASE_PROMPT
+        if self.doc_type and self.doc_type != "不指定类型":
+            doc_type_constraint = f"""
+\n⚠️【文档类型强制偏好】
+用户期望的答案主要来自文档类型：【{self.doc_type}】。
+1. 回答时请优先参考该类型的内容。
+2. 但如果跨类型内容（如其他文档）明显有助于回答问题，请合理补充，不要遗漏关键信息。
+3. 这是一个偏好设置（Bias），而非绝对过滤。
+"""
+            current_system_prompt += doc_type_constraint
 
         context_str = ""
         for item in top_results:
             source_tag = item.get('source', 'VECTOR')
             context_str += f"""
 ---
-[Rank {item['rank']}] [Source: {source_tag}] (Score: {item['final_score']:.2f})
+[Rank {item['rank']}] [Source: {source_tag}] (RRF: {item['final_score']:.4f})
 Section Path: {item['path']}
 Content:
 {item['content']}
@@ -418,9 +494,9 @@ Content:
 
         headers = { 'Content-Type': 'application/json', 'Authorization': f'Bearer {API_KEY}' }
         payload = {
-            "model": DEEPSEEK_R1_MODEL_NAME, 
+            "model": target_model, 
             "messages": [
-                {"role": "system", "content": DEEPSEEK_R1_SYSTEM_PROMPT},
+                {"role": "system", "content": current_system_prompt},
                 {"role": "user", "content": user_prompt_content}
             ],
             "stream": True,
@@ -428,13 +504,22 @@ Content:
         }
 
         try:
-            response = requests.post(DEEPSEEK_API_URL, headers=headers, json=payload, verify=False, stream=True)
+            if self._is_interrupted: return
+
+            # 总结生成也给足超时时间
+            response = requests.post(DEEPSEEK_API_URL, headers=headers, json=payload, verify=False, stream=True, timeout=120)
             
             if response.status_code == 200:
                 full_reasoning = ""
                 full_content = ""
+                is_thinking_logged = False
                 
                 for line in response.iter_lines():
+                    if self._is_interrupted: 
+                        self.log("🛑 总结生成已中断")
+                        self.summary_signal.emit("\n\n[用户终止了生成]")
+                        break
+
                     if line:
                         decoded_line = line.decode('utf-8')
                         if decoded_line.startswith("data: "):
@@ -445,43 +530,117 @@ Content:
                                 json_chunk = json.loads(data_str)
                                 delta = json_chunk['choices'][0]['delta']
                                 
+                                # === Thinking Process 捕获 (适用于 R1, X1-thinking 等支持 reasoning_content 的模型) ===
                                 current_reasoning_delta = delta.get('reasoning_content', '')
                                 current_content_delta = delta.get('content', '')
                                 updated = False
                                 
                                 if current_reasoning_delta:
+                                    if not is_thinking_logged:
+                                        self.log("🧠 检测到思维链 (CoT)，正在思考...")
+                                        is_thinking_logged = True
                                     full_reasoning += current_reasoning_delta
                                     updated = True
+                                
                                 if current_content_delta:
                                     full_content += current_content_delta
                                     updated = True
 
                                 if updated:
                                     formatted_output = ""
+                                    
+                                    # 实时展示思考过程
                                     if full_reasoning:
                                         clean_reasoning = full_reasoning.replace('\n', '\n> ')
-                                        formatted_output += f"> 🧠 **DeepSeek Thinking Process:**\n> {clean_reasoning}\n\n"
+                                        formatted_output += f"> 🧠 **Thinking Process:**\n> {clean_reasoning}\n\n"
                                     
+                                    if full_reasoning and full_content:
+                                        formatted_output += "---\n\n" 
+                                        
                                     if full_content:
-                                        if full_reasoning:
-                                            formatted_output += "---\n\n" 
                                         formatted_output += f"{full_content}"
                                         
                                     self.summary_signal.emit(formatted_output)
                             except Exception:
                                 continue
-                self.log("✅ DeepSeek 总结生成完毕")
+                if not self._is_interrupted:
+                    self.log(f"✅ {target_model} 总结生成完毕")
             else:
-                self.log(f"❌ DeepSeek API 错误: {response.status_code}")
+                self.log(f"❌ API 错误: {response.status_code}")
                 self.summary_signal.emit(f"⚠️ 无法生成总结: API Error {response.status_code}")
 
         except Exception as e:
             self.log(f"❌ DeepSeek 调用异常: {str(e)}")
             self.summary_signal.emit(f"⚠️ 总结生成失败: {str(e)}")
 
+    # --- 核心算法: RRF Fusion + Content Deduplication ---
+    def apply_rrf_fusion(self, vector_items, json_items, k=60):
+        """
+        倒数排名融合算法 (Reciprocal Rank Fusion)
+        """
+        fused_scores = defaultdict(float)
+        item_map = {}
+        
+        # 1. 处理 Vector 结果
+        for rank, item in enumerate(vector_items):
+            doc_id = item['id']
+            item_map[doc_id] = item
+            # Vector 权重默认 1.0
+            fused_scores[doc_id] += 1.0 / (k + rank + 1)
+            
+        # 2. 处理 JSON 结果
+        # 动态路由逻辑
+        is_precise = is_precise_intent(self.original_query)
+        
+        # 权重调节因子
+        json_boost = 1.0
+        if self.search_mode == 'precise':
+            json_boost = 5.0 # 强制优先
+        elif self.search_mode == 'smart' and is_precise:
+            self.log("💡 动态路由: 检测到精确代码/航班号，自动提升 JSON 权重")
+            json_boost = 3.0 # 智能提升
+        elif self.search_mode == 'fuzzy':
+            json_boost = 0.5 # 降低权重
+
+        for rank, item in enumerate(json_items):
+            doc_id = item['id']
+            if doc_id not in item_map:
+                item_map[doc_id] = item
+                item_map[doc_id]['debug_score'] = "JSON_New"
+            
+            # JSON 融合
+            fused_scores[doc_id] += json_boost * (1.0 / (k + rank + 1))
+            
+            # 标记来源
+            if "JSON" not in item_map[doc_id].get('source', ''):
+                item_map[doc_id]['source'] = "MIXED (Vec+JSON)"
+
+        # 3. 排序
+        sorted_doc_ids = sorted(fused_scores.keys(), key=lambda x: fused_scores[x], reverse=True)
+        
+        # 4. === 新增：内容指纹去重 ===
+        final_results = []
+        seen_fingerprints = set()
+        
+        for doc_id in sorted_doc_ids:
+            item = item_map[doc_id]
+            item['final_score'] = fused_scores[doc_id]
+            
+            # 计算内容指纹 (MD5)
+            content_fingerprint = get_text_hash(item.get('content', ''))
+            
+            if content_fingerprint in seen_fingerprints:
+                continue
+            
+            seen_fingerprints.add(content_fingerprint)
+            final_results.append(item)
+            
+        return final_results
 
     def run(self):
         try:
+            self._is_interrupted = False
+
             # 0. 加载 PageIndex 
             has_pageindex = False
             if self.json_path:
@@ -492,188 +651,154 @@ Content:
                 else:
                     self.log(f"⚠️ PageIndex 加载失败: {msg}")
             
+            if self._is_interrupted: return
+
             # --- 并发步骤: 启动 JSON 硬查询线程 ---
-            json_thread = None
-            if self.enable_json_search:
-                keywords = extract_keywords_with_jieba(self.original_query)
+            self._json_worker = None
+            if self.json_path and self.search_mode != 'fuzzy': 
+                # 【Feature】传入 Stopwords
+                keywords = extract_keywords_with_jieba(self.original_query, self.stopwords)
                 self.log(f"🔍 提取关键词: {keywords}")
-                if keywords and self.json_path:
+                if keywords:
                     self.log("🚀 启动 JSON 原文硬查询线程...")
-                    json_thread = JsonHardQueryWorker(self.json_path, keywords)
-                    json_thread.finished_signal.connect(self.on_json_search_finished)
-                    json_thread.start()
-                else:
-                    self.log("⚠️ 无有效关键词或 JSON 路径，跳过硬查询")
+                    self._json_worker = JsonHardQueryWorker(self.json_path, keywords)
+                    self._json_worker.finished_signal.connect(self.on_json_search_finished)
+                    self._json_worker.start()
             
+            if self._is_interrupted: return
+
             # --- Step 0: Query Rewrite ---
             rewritten = self.rewrite_query(self.original_query)
-            if rewritten and len(rewritten.strip()) > 0:
-                self.search_query = rewritten
-            else:
-                self.search_query = self.original_query
+            # 如果被中断，rewritten 可能是 None
+            if self._is_interrupted: return
+            
+            self.search_query = rewritten if rewritten else self.original_query
 
             # --- Step 1: Query Vector ---
+            vector_candidates = []
+            
             query_vec_list = self.get_remote_embedding(self.search_query)
-            if not query_vec_list:
-                self.log("❌ 向量获取失败，无法继续")
-                self.finish_signal.emit(False)
-                return
-            query_vec_np = np.array(query_vec_list, dtype=np.float32)
+            if self._is_interrupted: return
 
-            # --- Step 2: SQLite Vector Search ---
-            if not os.path.exists(self.db_path):
-                self.log("❌ 数据库文件不存在")
-                self.finish_signal.emit(False)
-                return
+            if query_vec_list and os.path.exists(self.db_path):
+                query_vec_np = np.array(query_vec_list, dtype=np.float32)
 
-            self.log(f"📂 正在连接数据库: {os.path.basename(self.db_path)}")
-            conn = sqlite3.connect(self.db_path)
-            cursor = conn.cursor()
-            
-            # 确认向量表状态
-            cursor.execute("SELECT count(*) FROM vectors")
-            count = cursor.fetchone()[0]
-            self.log(f"📊 数据库检测: vectors表包含 {count} 条向量数据")
-
-            cursor.execute("SELECT id, embedding, section_id FROM vectors")
-            rows = cursor.fetchall()
-            
-            raw_candidates = []
-            for row in rows:
-                v_id, emb_json, sec_id_db = row
-                try:
-                    doc_vec = np.array(json.loads(emb_json), dtype=np.float32)
-                    score = cosine_similarity(query_vec_np, doc_vec)
-                    # 此处 id 是向量表主键，section_id 是关联文档表的主键
-                    raw_candidates.append({"id": v_id, "vec_score": score, "section_id": str(sec_id_db)})
-                except: continue
-
-            raw_candidates.sort(key=lambda x: x["vec_score"], reverse=True)
-            top_candidates_raw = raw_candidates[:30] 
-            self.log(f"✅ 向量相似度计算完成，初步筛选前 {len(top_candidates_raw)} 条记录")
-
-            # --- Step 3: 去重 & 构造输入 (关联修正点) ---
-            rerank_input_texts = [] 
-            processed_candidates = [] 
-            seen_content_hashes = set()
-
-            for item in top_candidates_raw:
-                sec_id = item["section_id"]
-                node_info = self.page_index.get_node(sec_id) if has_pageindex else None
+                self.log(f"📂 正在连接数据库: {os.path.basename(self.db_path)}")
+                conn = sqlite3.connect(self.db_path)
+                cursor = conn.cursor()
                 
-                raw_text = ""
-                path_str = ""
-                summary_text = ""
+                cursor.execute("SELECT id, embedding, section_id FROM vectors")
+                rows = cursor.fetchall()
+                
+                raw_candidates = []
+                for row in rows:
+                    if self._is_interrupted: break 
+                    v_id, emb_json, sec_id_db = row
+                    try:
+                        doc_vec = np.array(json.loads(emb_json), dtype=np.float32)
+                        score = cosine_similarity(query_vec_np, doc_vec)
+                        raw_candidates.append({"id": v_id, "vec_score": score, "section_id": str(sec_id_db)})
+                    except: continue
 
-                if node_info:
-                    raw_text = node_info['text']
-                    path_str = " > ".join(node_info['path'])
-                    summary_text = node_info.get('summary', '')
-                else:
-                    # [Fallback] 如果 PageIndex 没找到，查 DB
-                    # ================= 修正核心: 使用 section_id 关联 documents.id =================
-                    # 修改点：同时读取 embedding_text (摘要) 和 original_snippet (详情)
-                    cursor.execute("SELECT embedding_text, original_snippet, section_path FROM documents WHERE id=?", (sec_id,))
-                    db_row = cursor.fetchone()
+                if self._is_interrupted: 
+                    conn.close()
+                    return
+
+                raw_candidates.sort(key=lambda x: x["vec_score"], reverse=True)
+                top_candidates_raw = raw_candidates[:40] 
+                
+                # --- Step 2: 填充内容 ---
+                rerank_input_texts = []
+                
+                for item in top_candidates_raw:
+                    if self._is_interrupted: break
+                    sec_id = item["section_id"]
+                    # 优先从 PageIndex 内存拿，拿不到查 DB
+                    node_info = self.page_index.get_node(sec_id) if has_pageindex else None
                     
-                    if db_row:
-                        emb_summary = db_row[0] if db_row[0] else ""
-                        raw_detail = db_row[1] if db_row[1] else ""
-                        
-                        # 策略：将摘要和原始细节拼接，确保 DeepSeek 拥有完整信息
-                        # 这样处理后，DeepSeek 既懂语义，又能看到具体的航班号
-                        raw_text = f"【内容摘要】：{emb_summary}\n\n【原始数据】：{raw_detail}"
-                        path_str = str(db_row[2])
-                        
-                        # self.log(f"✅ SQL 成功召回: ID={sec_id[:8]}，来源=documents表")
+                    raw_text = ""
+                    path_str = ""
+                    summary_text = ""
+
+                    if node_info:
+                        raw_text = node_info['text']
+                        path_str = " > ".join(node_info['path'])
+                        summary_text = node_info.get('summary', '')
                     else:
-                        # self.log(f"⚠️ 数据库回退查询失败: 找不到 section_id 为 {sec_id} 的文档")
-                        continue
+                        cursor.execute("SELECT embedding_text, original_snippet, section_path FROM documents WHERE id=?", (sec_id,))
+                        db_row = cursor.fetchone()
+                        if db_row:
+                            emb_summary = db_row[0] if db_row[0] else ""
+                            raw_detail = db_row[1] if db_row[1] else ""
+                            raw_text = f"【内容摘要】：{emb_summary}\n\n【原始数据】：{raw_detail}"
+                            path_str = str(db_row[2])
+                        else:
+                            continue
 
-                content_hash = get_text_hash(raw_text)
-                if content_hash in seen_content_hashes:
-                    continue 
-                seen_content_hashes.add(content_hash)
-
-                context_aware_input = f"Section Path: {path_str}\nContent: {raw_text}"
-                rerank_input_texts.append(context_aware_input)
-
-                # 如果有 PageIndex 的 summary，则展示；否则展示我们合成的 raw_text
-                display_content = f"[Summary]\n{summary_text}\n\n[Text]\n{raw_text}" if summary_text else raw_text
-                
-                processed_candidates.append({
-                    "id": item["id"],
-                    "vec_score": item["vec_score"],
-                    "path": path_str,
-                    "content": display_content,
-                    "final_score": 0.0,
-                    "source": "VECTOR" 
-                })
-                
-                if len(processed_candidates) >= 15:
-                    break
-
-            conn.close()
-            self.log(f"✅ 文档关联检索成功: 已从数据库获取 {len(processed_candidates)} 条文本详情")
-
-            # --- Step 4: 执行 Rerank ---
-            rerank_scores = self.rerank_with_bge(self.search_query, rerank_input_texts)
-            
-            if rerank_scores and len(rerank_scores) == len(processed_candidates):
-                for idx, candidate in enumerate(processed_candidates):
-                    raw_rerank_score = rerank_scores[idx]
-                    adjusted_rerank_score = self.apply_industrial_rules(
-                        self.search_query, 
-                        candidate['path'], 
-                        raw_rerank_score
-                    )
-                    candidate['final_score'] = 0.2 * candidate['vec_score'] + 0.8 * adjusted_rerank_score
-                    candidate['debug_score'] = f"R:{adjusted_rerank_score:.2f} (Orig:{raw_rerank_score:.2f})"
-                
-                processed_candidates.sort(key=lambda x: x["final_score"], reverse=True)
-            else:
-                self.log("⚠️ 降级：仅使用向量分排序")
-                for candidate in processed_candidates:
-                    candidate['final_score'] = candidate['vec_score']
-                    candidate['debug_score'] = "VecOnly"
-
-            # --- Step 5: 等待 JSON Search 线程并融合结果 ---
-            if json_thread:
-                self.log("⏳ 等待 JSON 原文硬查询线程完成 (超时 3s)...")
-                json_thread.wait(3000) 
-                
-                if self.json_search_results:
-                    for json_item in self.json_search_results:
-                        h = get_text_hash(json_item['content'])
-                        if h not in seen_content_hashes:
-                            processed_candidates.append({
-                                "id": json_item['id'],
-                                "vec_score": 1.0, 
-                                "path": json_item['path'],
-                                "content": json_item['content'],
-                                "final_score": json_item['score'], 
-                                "debug_score": "JSON_Hard",
-                                "source": "JSON_Source"
-                            })
-                            seen_content_hashes.add(h)
+                    rerank_input_texts.append(f"Section Path: {path_str}\nContent: {raw_text}")
+                    display_content = f"[Summary]\n{summary_text}\n\n[Text]\n{raw_text}" if summary_text else raw_text
                     
-                    processed_candidates.sort(key=lambda x: x["final_score"], reverse=True)
+                    vector_candidates.append({
+                        "id": sec_id, # 统一使用 section_id / node_id 作为 RRF 的 Key
+                        "vec_score": item["vec_score"],
+                        "path": path_str,
+                        "content": display_content,
+                        "source": "VECTOR" 
+                    })
+                
+                conn.close()
+                
+                # --- Step 3: Rerank Vector Results ---
+                if not self._is_interrupted and vector_candidates:
+                    rerank_scores = self.rerank_with_bge(self.search_query, rerank_input_texts)
+                    if rerank_scores:
+                        for idx, candidate in enumerate(vector_candidates):
+                            candidate['rerank_score'] = rerank_scores[idx]
+                        
+                        vector_candidates.sort(key=lambda x: x.get('rerank_score', 0), reverse=True)
+                        self.log(f"✅ Vector 通道准备就绪: {len(vector_candidates)} 条 (已 Rerank)")
 
-            # --- Step 6: Top-K Result ---
-            final_top_results = processed_candidates[:12] 
+            # --- Step 4: 等待 JSON Search ---
+            json_results = []
+            if self._json_worker:
+                self.log("⏳ 等待 JSON 原文硬查询线程完成...")
+                # 循环等待，以便能够响应 Stop
+                while self._json_worker.isRunning():
+                    if self._is_interrupted:
+                        self._json_worker.stop()
+                        break
+                    self._json_worker.wait(100) # Wait 100ms chunks
+
+                json_results = self.json_search_results
+            
+            if self._is_interrupted:
+                self.finish_signal.emit(False)
+                return
+
+            # --- Step 5: 执行 RRF 融合 (含指纹去重) ---
+            self.log("⚖️ 执行 RRF 融合与内容指纹去重...")
+            final_top_results = self.apply_rrf_fusion(vector_candidates, json_results)
+            
+            # 取 Top 12
+            final_top_results = final_top_results[:12]
+            self.log(f"✅ 最终召回: {len(final_top_results)} 条唯一内容")
+            
+            # 重新打 Rank 标签
             for idx, res in enumerate(final_top_results):
                 res['rank'] = idx + 1
-
+                
             self.result_signal.emit(final_top_results)
             
-            # --- Step 7: DeepSeek R1 Summary ---
+            # --- Step 6: DeepSeek Summary ---
             self.call_deepseek_summary(self.original_query, final_top_results)
             
-            self.finish_signal.emit(True)
+            if self._is_interrupted:
+                self.finish_signal.emit(False)
+            else:
+                self.finish_signal.emit(True)
 
         except Exception as e:
             self.log(f"❌ 严重错误: {str(e)}")
             import traceback
             self.log(traceback.format_exc())
-
             self.finish_signal.emit(False)

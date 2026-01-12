@@ -46,8 +46,8 @@ urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 for k in ['HTTP_PROXY', 'HTTPS_PROXY', 'http_proxy', 'https_proxy']:
     os.environ.pop(k, None)
 
-API_KEY = "sk-fXM4W0CdcKnNp3NVDfF85f2b90284b11AfDdF9F5627f627b"
-BASE_URL = "https://aiplus.airchina.com.cn:18080/v1" 
+API_KEY = "YOUR API KEY"
+BASE_URL = "https://WWW.DEEPSEEK.COM:18080/v1" 
 
 SYSTEM_PROMPT = """你是一个高精度的元数据分析师。你的任务是分析给定的文档片段，并生成一段简短的、富含上下文的“语义导语”。
 不需要重写原始数据，只需要生成“导语”。导语必须明确指出：这段内容属于哪个章节路径，包含什么类型的数据。"""
@@ -594,4 +594,5 @@ if __name__ == "__main__":
     app.setStyle("Fusion")
     w = MainWindow()
     w.show()
+
     sys.exit(app.exec_())

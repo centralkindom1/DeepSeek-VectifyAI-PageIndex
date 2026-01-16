@@ -17,8 +17,9 @@ from PyQt5.QtCore import Qt, QThread, pyqtSignal, QTimer
 # ==================================================================================
 # [CONFIGURATION]
 # ==================================================================================
-BACKEND_SCRIPT_NAME = "backend_pgui.py" # This will now contain the "Good" Tab B logic
-PAGEINDEX_SCRIPT_NAME = "run_pageindex.py"
+BACKEND_SCRIPT_NAME = "backend_pgui.py" # Tab B logic
+PAGEINDEX_SCRIPT_NAME = "run_pageindex.py" # Tab A logic
+CONVERTER_SCRIPT_NAME = "json_phase2_converter.py" # Tab C logic (NEW)
 CONFIG_FILE = "gui_configs.json"
 
 # Try importing the visual window, otherwise use a dummy class
@@ -194,7 +195,10 @@ class MainWindow(QMainWindow):
         self.setWindowTitle("PageIndex Pro 2026 - Neural Interface (Hybrid Edition)")
         self.resize(1200, 900)
         self.visual_window = AIVisualWindow()
+        
+        # Load configs, creating default if missing
         self.configs = self.load_configs()
+        
         self.worker = None
         
         self.start_time = 0
@@ -203,6 +207,9 @@ class MainWindow(QMainWindow):
         
         self.init_ui()
         self.apply_styles()
+        
+        # Load recent paths for Tab C if they exist
+        self.load_recent_paths_tab_c()
 
     def apply_styles(self):
         self.setStyleSheet(STYLESHEET)
@@ -214,7 +221,7 @@ class MainWindow(QMainWindow):
         
         # Header
         header = QHBoxLayout()
-        title = QLabel("PAGEINDEX PRO <sup>v2026.2</sup>")
+        title = QLabel("PAGEINDEX PRO <sup>v2026.3</sup>")
         title.setStyleSheet("font-size: 26px; color: #00ffcc; letter-spacing: 2px;")
         header.addWidget(title)
         header.addStretch()
@@ -224,15 +231,20 @@ class MainWindow(QMainWindow):
         self.tabs = QTabWidget()
         main_layout.addWidget(self.tabs)
 
-        # TAB A: From Set 1 (Optimized PageIndex)
+        # TAB A: PDF Parsing (PageIndex)
         self.tab_pageindex = QWidget()
         self.init_tab_pageindex()
         self.tabs.addTab(self.tab_pageindex, "TAB A: PDF Parsing (PageIndex)")
 
-        # TAB B: From Set 2 (Good Vector Gen)
+        # TAB B: RAG Vectorization (LLM)
         self.tab_vector = QWidget()
         self.init_tab_vector()
-        self.tabs.addTab(self.tab_vector, "TAB B: RAG Vectorization")
+        self.tabs.addTab(self.tab_vector, "TAB B: RAG Vectorization (LLM)")
+        
+        # TAB C: Rule-Based Conversion (NEW)
+        self.tab_converter = QWidget()
+        self.init_tab_converter()
+        self.tabs.addTab(self.tab_converter, "TAB C: Rule-Based Conversion")
 
         # Console
         main_layout.addWidget(QLabel("SYSTEM KERNEL LOGS:"))
@@ -282,6 +294,10 @@ class MainWindow(QMainWindow):
         cfg = QHBoxLayout(cfg_frame)
         self.cb_configs = QComboBox()
         self.cb_configs.addItems(self.configs.keys())
+        # Filter out the special settings key from the combobox if it exists
+        idx = self.cb_configs.findText("RecentSettings")
+        if idx >= 0: self.cb_configs.removeItem(idx)
+        
         self.cb_configs.currentTextChanged.connect(self.load_selected_config)
         btn_save = QPushButton("💾 SAVE PRESET")
         btn_save.clicked.connect(self.save_config)
@@ -362,7 +378,7 @@ class MainWindow(QMainWindow):
         layout.addStretch()
 
     # ==============================================================================
-    # TAB B: RAG VECTORIZATION (Transplanted from GoodForTAB_B_Vector_pgui.py)
+    # TAB B: RAG VECTORIZATION (From Set 2)
     # ==============================================================================
     def init_tab_vector(self):
         """ TAB B: RAG Vectorization (UI ported from GoodForTAB_B) """
@@ -370,7 +386,7 @@ class MainWindow(QMainWindow):
         layout.setSpacing(15)
         layout.setContentsMargins(20, 20, 20, 20)
         
-        desc = QLabel("Transform PageIndex JSON structures into RAG-ready vector datasets using Semantic Summarization.")
+        desc = QLabel("Transform PageIndex JSON structures into RAG-ready vector datasets using Semantic Summarization (LLM).")
         desc.setStyleSheet("color: #8b949e; font-style: italic; font-weight: normal;")
         layout.addWidget(desc)
 
@@ -429,6 +445,53 @@ class MainWindow(QMainWindow):
         layout.addWidget(self.btn_gen_vector)
 
     # ==============================================================================
+    # TAB C: Rule-Based Conversion (NEW)
+    # ==============================================================================
+    def init_tab_converter(self):
+        """ TAB C: Rule-Based Tree-to-Flat JSON Converter """
+        layout = QVBoxLayout(self.tab_converter)
+        layout.setSpacing(15)
+        layout.setContentsMargins(20, 20, 20, 20)
+
+        desc = QLabel("Transform PageIndex JSON Tree to Flat Vector JSON using Rule-Based Logic (No LLM). Ideal for high-speed conversion.")
+        desc.setStyleSheet("color: #00ffcc; font-style: italic; font-weight: normal;")
+        layout.addWidget(desc)
+
+        # Input File
+        row1 = QHBoxLayout()
+        self.edit_c_input = QLineEdit()
+        self.edit_c_input.setPlaceholderText("Select source JSON (Tree structure)...")
+        btn_c_input = QPushButton("📂 SOURCE")
+        btn_c_input.clicked.connect(self.get_converter_input)
+        row1.addWidget(QLabel("SOURCE JSON:"))
+        row1.addWidget(self.edit_c_input, 1)
+        row1.addWidget(btn_c_input)
+        layout.addLayout(row1)
+
+        # Output File
+        row2 = QHBoxLayout()
+        self.edit_c_output = QLineEdit()
+        self.edit_c_output.setPlaceholderText("Output JSON path...")
+        btn_c_output = QPushButton("📂 TARGET")
+        btn_c_output.clicked.connect(self.get_converter_output)
+        row2.addWidget(QLabel("TARGET JSON:"))
+        row2.addWidget(self.edit_c_output, 1)
+        row2.addWidget(btn_c_output)
+        layout.addLayout(row2)
+
+        # Auto-update output path when input changes
+        self.edit_c_input.textChanged.connect(self.update_converter_output_path)
+
+        # Run Button
+        self.btn_run_converter = QPushButton("⚡ RUN CONVERTER (RULE BASED)")
+        self.btn_run_converter.setFixedHeight(50)
+        self.btn_run_converter.setStyleSheet("background-color: #d2a8ff; color: #0d1117; font-size: 15px; font-weight: bold;")
+        self.btn_run_converter.clicked.connect(self.start_converter_task)
+
+        layout.addStretch()
+        layout.addWidget(self.btn_run_converter)
+
+    # ==============================================================================
     # LOGIC METHODS
     # ==============================================================================
 
@@ -441,20 +504,48 @@ class MainWindow(QMainWindow):
 
     def save_config(self):
         name = self.cb_configs.currentText() or "Custom"
+        if name == "RecentSettings": name = "Custom" # Protect special key
+        
         self.configs[name] = {"pdf": self.edit_pdf.text(), "model": self.combo_model.currentText()}
-        with open(CONFIG_FILE, 'w', encoding='utf-8') as f: json.dump(self.configs, f)
+        
+        self.write_configs_to_disk()
         self.append_log("<span style='color:#00FF00'>[SYSTEM] Config saved.</span>")
 
+    def write_configs_to_disk(self):
+        try:
+            with open(CONFIG_FILE, 'w', encoding='utf-8') as f: 
+                json.dump(self.configs, f, indent=4)
+        except Exception as e:
+            self.append_log(f"<span style='color:red'>[ERROR] Failed to save config: {e}</span>")
+
+    def save_recent_paths_tab_c(self):
+        """ Saves Tab C paths to a special key in the config file """
+        if "RecentSettings" not in self.configs:
+            self.configs["RecentSettings"] = {}
+        
+        self.configs["RecentSettings"]["tab_c_input"] = self.edit_c_input.text()
+        self.configs["RecentSettings"]["tab_c_output"] = self.edit_c_output.text()
+        self.write_configs_to_disk()
+
+    def load_recent_paths_tab_c(self):
+        """ Loads Tab C paths from config """
+        if "RecentSettings" in self.configs:
+            settings = self.configs["RecentSettings"]
+            self.edit_c_input.setText(settings.get("tab_c_input", ""))
+            self.edit_c_output.setText(settings.get("tab_c_output", ""))
+        
     def load_selected_config(self, name):
-        if name in self.configs:
+        if name in self.configs and name != "RecentSettings":
             c = self.configs[name]
             self.edit_pdf.setText(c.get('pdf', ''))
             self.combo_model.setCurrentText(c.get('model', DEFAULT_MODEL))
 
+    # --- TAB A Handlers ---
     def get_file(self):
         f, _ = QFileDialog.getOpenFileName(self, "Select PDF", self.edit_pdf.text(), "*.pdf")
         if f: self.edit_pdf.setText(f)
 
+    # --- TAB B Handlers ---
     def get_json_file(self):
         f, _ = QFileDialog.getOpenFileName(self, "Select JSON", self.edit_json_path.text(), "*.json")
         if f: 
@@ -470,6 +561,28 @@ class MainWindow(QMainWindow):
             d, n = os.path.split(input_path)
             self.edit_export_path.setText(os.path.join(d, f"RAGjson_{n}"))
 
+    # --- TAB C Handlers ---
+    def get_converter_input(self):
+        f, _ = QFileDialog.getOpenFileName(self, "Select Source JSON", self.edit_c_input.text(), "JSON Files (*.json)")
+        if f:
+            self.edit_c_input.setText(f)
+            self.update_converter_output_path(f)
+            self.save_recent_paths_tab_c()
+
+    def get_converter_output(self):
+        f, _ = QFileDialog.getSaveFileName(self, "Select Target JSON", self.edit_c_output.text(), "JSON Files (*.json)")
+        if f:
+            self.edit_c_output.setText(f)
+            self.save_recent_paths_tab_c()
+
+    def update_converter_output_path(self, input_path):
+        if input_path:
+            d, n = os.path.split(input_path)
+            base, ext = os.path.splitext(n)
+            
+            self.edit_c_output.setText(os.path.join(d, f"vector_RAG_{base}{ext}"))
+
+    # --- Common UI ---
     def toggle_visual_window(self):
         if self.btn_visual.isChecked():
             self.visual_window.show()
@@ -481,7 +594,6 @@ class MainWindow(QMainWindow):
 
     def append_log(self, html):
         self.txt_console.append(html)
-        # Auto-scroll
         cursor = self.txt_console.textCursor()
         cursor.movePosition(cursor.End)
         self.txt_console.setTextCursor(cursor)
@@ -496,14 +608,6 @@ class MainWindow(QMainWindow):
             phase = data.get("phase", "Processing")
             current = data.get("current", 0)
             total = data.get("total", 0)
-            eta_sec = data.get("eta_sec", None)
-            
-            if eta_sec is not None:
-                if eta_sec > 0:
-                    eta_str = str(timedelta(seconds=int(eta_sec)))
-                    self.lbl_eta.setText(f"REMAINING: {eta_str}")
-                else:
-                    self.lbl_eta.setText("REMAINING: Calculating...")
             
             if total > 0:
                 percent = int((current / total) * 100)
@@ -526,6 +630,7 @@ class MainWindow(QMainWindow):
         self.btn_run.setEnabled(False)
         self.btn_stop.setEnabled(True)
         self.btn_gen_vector.setEnabled(False)
+        self.btn_run_converter.setEnabled(False)
         
         self.start_time = time.time()
         self.lbl_elapsed.setText("ELAPSED: 00:00:00")
@@ -538,7 +643,8 @@ class MainWindow(QMainWindow):
         self.worker.progress_signal.connect(self.update_progress_display)
         self.worker.finished_signal.connect(self.on_worker_finished)
         
-        if not self.btn_visual.isChecked():
+        # Tab A visualizer logic (optional for C but harmless)
+        if self.tabs.currentIndex() == 0 and not self.btn_visual.isChecked():
             self.btn_visual.click()
             
         self.worker.start()
@@ -558,6 +664,7 @@ class MainWindow(QMainWindow):
         
         self.btn_run.setEnabled(True)
         self.btn_gen_vector.setEnabled(True)
+        self.btn_run_converter.setEnabled(True)
         self.btn_stop.setEnabled(False)
         self.append_log("<span style='color:#00ffcc'>[SYSTEM] Task Completed.</span>")
 
@@ -571,47 +678,56 @@ class MainWindow(QMainWindow):
         model = self.combo_model.currentText()
         if not pdf: return QMessageBox.warning(self, "Error", "Select PDF file!")
         
-        # Strategy index and threads (passed for potential future use or if script supports it)
         strategy_idx = self.combo_schema.currentIndex()
         threads = self.combo_threads.currentText()
         
         self.append_log(f"<span style='color:#AAAAAA'>[CONFIG] IATA Optimization Mode: Strategy {strategy_idx}, Threads {threads}</span>")
         
         py = sys.executable
-        # Note: Using robust call. If run_pageindex.py doesn't support strategy args, they might be ignored or cause error.
-        # Based on Set 1, we default to basic call if unsure, but here we assume standard run_pageindex.
-        # Providing the command compatible with standard `run_pageindex.py`. 
-        # If the user has a `run_pageindex.py` that accepts args, great. If not, this might need adjustment.
-        # For safety/robustness based on user input file 1:
+        # Note: Assuming run_pageindex.py accepts these args based on context
         cmd = f'"{py}" -u {PAGEINDEX_SCRIPT_NAME} --pdf_path "{pdf}" --model "{model}"'
         
         self.append_log(f"<span style='color:#79c0ff'>[CMD] {cmd}</span>")
         self.start_worker(cmd)
 
     def start_vector_task(self):
-        """ TAB B Task: RAG Vectorization (Using the Good Backend) """
+        """ TAB B Task: RAG Vectorization (LLM Based) """
         if not os.path.exists(BACKEND_SCRIPT_NAME):
-             QMessageBox.critical(self, "Error", f"Backend script '{BACKEND_SCRIPT_NAME}' missing!\nPlease ensure {BACKEND_SCRIPT_NAME} is in the same folder.")
+             QMessageBox.critical(self, "Error", f"Backend script '{BACKEND_SCRIPT_NAME}' missing!")
              return
 
         inp = self.edit_json_path.text()
         out = self.edit_export_path.text()
         model = self.combo_vector_model.currentText()
-        
-        # Strategy Mapping based on UI Selection
-        # 0: Lossless, 1: Semantic, 2: Mixed
         strat_idx = self.combo_strategy_tabb.currentIndex()
         
         if not inp: return QMessageBox.warning(self, "Error", "Select Input JSON!")
-        if not out: self.update_export_path(inp); out = self.edit_export_path.text()
         
         py = sys.executable
-        # Calls the "Good" backend logic (which we saved as backend_pgui.py)
-        # We ensure threads=1 is implied or passed as argument if the backend supports it, 
-        # but the Good logic is sequential so threads arg might be ignored or handled gracefully.
         cmd = f'"{py}" -u {BACKEND_SCRIPT_NAME} --input "{inp}" --output "{out}" --model "{model}" --strategy {strat_idx}'
         
         self.append_log(f"<span style='color:#79c0ff'>[CMD] {cmd}</span>")
+        self.start_worker(cmd)
+
+    def start_converter_task(self):
+        """ TAB C Task: Rule-Based Converter """
+        if not os.path.exists(CONVERTER_SCRIPT_NAME):
+             QMessageBox.critical(self, "Error", f"Converter script '{CONVERTER_SCRIPT_NAME}' missing!\nPlease ensure it's in the same folder.")
+             return
+
+        inp = self.edit_c_input.text()
+        out = self.edit_c_output.text()
+        
+        if not inp: return QMessageBox.warning(self, "Error", "Select Input JSON!")
+        if not out: self.update_converter_output_path(inp); out = self.edit_c_output.text()
+        
+        # Save paths before running
+        self.save_recent_paths_tab_c()
+
+        py = sys.executable
+        cmd = f'"{py}" -u {CONVERTER_SCRIPT_NAME} "{inp}" "{out}"'
+        
+        self.append_log(f"<span style='color:#d2a8ff'>[CMD] {cmd}</span>")
         self.start_worker(cmd)
 
 if __name__ == "__main__":

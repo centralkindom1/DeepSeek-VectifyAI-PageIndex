@@ -1,3 +1,4 @@
+# backend_pgui.py （完全未修改，保持原样）
 import sys
 import json
 import os
@@ -21,8 +22,8 @@ for k in ['HTTP_PROXY', 'HTTPS_PROXY', 'http_proxy', 'https_proxy']:
     os.environ.pop(k, None)
 
 # 2. API Configuration (Internal Network)
-API_KEY = "YOUR API KEY"
-BASE_URL = "https://WWW.DEEPSEEK.COM:18080/v1" 
+API_KEY = "sk-fXM4W0CdcKnNp3NVDfF85f2b90284b11AfDdF9F5627f627b"
+BASE_URL = "https://aiplus.airchina.com.cn:18080/v1" 
 
 # ================= PROMPTS =================
 SYSTEM_PROMPT = """你是一个高精度的元数据分析师。你的任务是分析给定的文档片段，并生成一段简短的、富含上下文的“语义导语”。
@@ -167,10 +168,6 @@ def main():
         
         output_data = []
         
-        # Calculate total for progress estimation (optional)
-        # nodes_list = list(recursive_walk(root_nodes))
-        # total_nodes = len(nodes_list)
-        
         processed_count = 0
         
         for item in recursive_walk(root_nodes):
@@ -211,22 +208,19 @@ def main():
                 log(f"JSON Parse Failed for {node_id}, using fallback.", "WARN")
 
             # 5. [Core] Strategy Branching (From Good Tab B)
-            # Strategy 0: Data Lossless (Default)
-            # Strategy 1: Policy/Doc (Summary only)
-            # Strategy 2: Mixed
             semantic_intro = vector_obj.get("semantic_intro", "")
             raw_data_block = content.strip()
             
-            if args.strategy == 0: # Data Lossless (Table/Schedule)
+            if args.strategy == 0: 
                 if not raw_data_block and has_children:
                      final_text = f"{semantic_intro}\n(包含子章节数据)"
                 else:
                      final_text = f"{semantic_intro}\n\n【原始数据内容】:\n{raw_data_block}"
             
-            elif args.strategy == 1: # Semantic Summary (Policy/Doc)
+            elif args.strategy == 1: 
                 final_text = semantic_intro
             
-            else: # Mixed Mode (Strategy 2)
+            else: 
                  final_text = f"{semantic_intro}\n\n[Reference Data]:\n{raw_data_block}"
 
             final_item = {
@@ -240,17 +234,14 @@ def main():
                     "original_length": len(content),
                     "strategy": args.strategy
                 },
-                "original_snippet": content[:500] 
+                "original_snippet": content 
             }
 
             output_data.append(final_item)
             processed_count += 1
             
-            # Report progress via special tag for Frontend
-            # (Simple count here, robust frontend handles missing total)
             print(f"@@PROGRESS@@{{\"phase\": \"Vectorizing\", \"current\": {processed_count}, \"total\": 0}}", flush=True)
             
-            # Small sleep to be nice to the system
             time.sleep(0.1)
 
         with open(args.output, 'w', encoding='utf-8') as f:
@@ -265,5 +256,4 @@ def main():
         traceback.print_exc()
 
 if __name__ == "__main__":
-
     main()

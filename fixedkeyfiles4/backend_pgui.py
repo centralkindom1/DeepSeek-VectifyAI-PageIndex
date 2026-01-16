@@ -22,8 +22,8 @@ for k in ['HTTP_PROXY', 'HTTPS_PROXY', 'http_proxy', 'https_proxy']:
     os.environ.pop(k, None)
 
 # 2. API Configuration (Internal Network)
-API_KEY = "sk-fXM4W0CdcKnNp3NVDfF85f2b90284b11AfDdF9F5627f627b"
-BASE_URL = "https://aiplus.airchina.com.cn:18080/v1" 
+API_KEY = "YOUR API KEY"
+BASE_URL = "https://WWW.DEEPSEEK.COM:18080/v1" 
 
 # ================= PROMPTS =================
 SYSTEM_PROMPT = """你是一个高精度的元数据分析师。你的任务是分析给定的文档片段，并生成一段简短的、富含上下文的“语义导语”。
@@ -256,4 +256,5 @@ def main():
         traceback.print_exc()
 
 if __name__ == "__main__":
+
     main()

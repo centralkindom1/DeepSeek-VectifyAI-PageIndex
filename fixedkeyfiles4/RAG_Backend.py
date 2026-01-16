@@ -16,30 +16,26 @@ from collections import defaultdict
 from PyQt5.QtCore import QThread, pyqtSignal, QMutex, QMutexLocker
 
 # ================= 配置与环境 =================
-# 禁用 HTTPS 警告 (Win7/内网适配)
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 os.environ['CURL_CA_BUNDLE'] = ''
 
 # API 配置 (硬编码 Key)
-API_KEY = ""
+API_KEY = "sk-fXM4W0CdcKnNp3NVDfF85f2b90284b11AfDdF9F5627f627b"
 
 # 1. Embedding API
-EMBEDDING_API_URL = "https://:18080/v1/embeddings" 
+EMBEDDING_API_URL = "https://aiplus.airchina.com.cn:18080/v1/embeddings" 
 EMBEDDING_MODEL_NAME = "bge-m3"
 
 # 2. Rerank API
-RERANK_API_URL = "https://.cn:18080/v1/rerank" 
+RERANK_API_URL = "https://aiplus.airchina.com.cn:18080/v1/rerank" 
 RERANK_MODEL_NAME = "bge-reranker-v2-m3"
 
-# 3. DeepSeek/LLM API (Chat Completion)
-DEEPSEEK_API_URL = "https://18080/v1/chat/completions"
-# 模型名称常量 (仅作参考，实际使用前端传入的值)
+# 3. DeepSeek/LLM API
+DEEPSEEK_API_URL = "https://aiplus.airchina.com.cn:18080/v1/chat/completions"
 DEEPSEEK_V3_MODEL_NAME = "DeepSeek-V3"
 
 # ================= System Prompts =================
-
 REWRITE_SYSTEM_PROMPT = """你是一个工业级 RAG 系统中的「Query Rewrite 模块」。
-
 你的职责不是回答问题，而是：
 将用户输入的「简短、模糊或口语化查询」
 重写为一个「语义清晰、信息密度高、适合向量检索与 reranker 判断相关性的查询」。
@@ -51,15 +47,12 @@ REWRITE_SYSTEM_PROMPT = """你是一个工业级 RAG 系统中的「Query Rewrit
 4. 不要输出任何解释、分析或多版本结果
 5. 只输出一条重写后的查询文本
 
-重写规则（必须严格遵守）：
+重写规则：
 - 如果用户查询过短（≤3 个词），必须进行语义扩展
 - 如果查询包含歧义词（如 model、train、data、method 等），需根据「技术文档检索」场景进行消歧
 - 优先使用完整自然语言描述，而不是关键词堆叠
-- 查询应覆盖用户最可能关注的方面，例如：定义、过程、机制、配置、方法、策略、实验设置、实现细节等
-- 输出长度建议为 1 句话，最多不超过 2 句话
-- 不要加入任何格式符号（如列表、引号、编号）"""
+- 输出长度建议为 1 句话，最多不超过 2 句话"""
 
-# 基础 R1 Prompt，后续代码中会动态插入 Doc Type 约束
 DEEPSEEK_R1_BASE_PROMPT = """🎯【角色定义】
 你是一个 RAG Final Answer Composer（检索增强生成的最终答案生成器）。
 你的任务 不是检索、不是排序、不是猜测，而是：
@@ -70,7 +63,7 @@ DEEPSEEK_R1_BASE_PROMPT = """🎯【角色定义】
 1. query: 用户的原始问题
 2. retrieved_chunks: 包含来自 [VECTOR] (向量召回) 和 [JSON_Source] (原文硬匹配) 的混合内容。
 
-🔒【强制约束（非常重要）】
+🔒【强制约束】
 1️⃣ 事实来源约束（防幻觉）
 ❌ 禁止 使用任何外部知识
 ❌ 禁止 补充未在 retrieved_chunks 中出现的事实
@@ -80,9 +73,8 @@ DEEPSEEK_R1_BASE_PROMPT = """🎯【角色定义】
 2️⃣ 内容使用规则（防遗漏）
 优先使用 Rank 靠前的内容。
 注意区分来源：[JSON_Source] 来源的内容直接来自原始文档，具有最高的事实参考价值。
-若多个 chunk 语义重复，应：合并信息、去除重复表述。
 
-3️⃣ 噪声处理规则（适配 PDF / OCR）
+3️⃣ 噪声处理规则
 允许你：修复断行、合并被拆散的句子、去除明显乱码
 ❌ 不允许“合理猜测”缺失内容
 
@@ -91,19 +83,9 @@ DEEPSEEK_R1_BASE_PROMPT = """🎯【角色定义】
 ✅ 语言清晰、技术准确
 ✅ **必须使用 Markdown 格式，包含清晰的段落、列表和加粗**
 ✅ 不直接大段复制原文（允许短引用）
-✅ 不提及“召回 / reranker / 向量 / chunk / SQL”等系统概念
-
-📐【推荐输出结构（自动选择）】
-根据问题复杂度，自适应选择：
-- 简单问题：直接给出 1–2 段 concise 回答
-- 技术型问题（推荐）：简要结论（1–2 句） + 详细说明（要点列表） + 补充说明
 
 ⚠️【失败兜底策略】
-如果所有 retrieved_chunks 与 query 相关性都很弱，或内容彼此矛盾、无法整合，
-你必须输出：“根据当前召回的文档内容，无法对该问题给出可靠回答。”
-
-✅【总结一句话】
-你是一个“只基于证据的答案生成器”，不是一个自由发挥的聊天模型。"""
+如果所有 retrieved_chunks 与 query 相关性都很弱，必须输出：“根据当前召回的文档内容，无法对该问题给出可靠回答。”"""
 
 # ================= 核心工具函数 =================
 def cosine_similarity(vec1, vec2):
@@ -118,17 +100,21 @@ def cosine_similarity(vec1, vec2):
 
 def get_text_hash(text):
     """生成文本的 SHA256 哈希，用于严格去重"""
-    # 移除首尾空格并转小写，确保鲁棒性
     clean_text = text.strip().lower()
     return hashlib.sha256(clean_text.encode('utf-8')).hexdigest()
 
-def extract_keywords_with_jieba(query, stopwords=None, top_n=5):
+def extract_keywords_with_jieba(query, stopwords=None, airline_dict=None, top_n=5):
     """
-    使用 jieba 提取关键词，优先保留名词 (n)、英文 (eng) 和 动词 (v)
-    并支持 Stopwords 过滤
+    【三步走策略应用】
+    Step 1: 字典优先 (Airline Dict) -> 权重 3 (最高)
+    Step 2: 正则优先 (Flight No/Code) -> 权重 3
+    Step 3: Jieba NLP -> 权重 1-2
     """
     if not jieba:
         return query.split() # Fallback
+    
+    keywords = []
+    query_lower = query.lower()
     
     # 预处理 stopwords set
     stop_set = set()
@@ -136,25 +122,40 @@ def extract_keywords_with_jieba(query, stopwords=None, top_n=5):
         for sw in stopwords:
             stop_set.add(sw.strip().lower())
 
+    # --- Step 1: 字典优先 (Exact Match in Query) ---
+    if airline_dict:
+        for airline in airline_dict:
+            # 简单包含检测
+            if airline.lower() in query_lower:
+                # 找到航司名，直接作为高权重关键词
+                keywords.append((airline, 3))
+
+    # --- Step 2: 正则优先 (Regex for Codes) ---
+    # 匹配 CA123, B737, A320 等
+    code_pattern = r'[A-Za-z]{2,3}\d{3,4}' 
+    codes = re.findall(code_pattern, query)
+    for code in codes:
+        keywords.append((code, 3))
+
+    # --- Step 3: NLP (Jieba) ---
     words = pseg.cut(query)
-    keywords = []
-    
-    # 权重规则：名词/英文 > 动词 > 其他
     for w in words:
         word = w.word.strip()
         flag = w.flag
         
-        # 基础过滤：长度小于2 或 在停用词表中
         if len(word) < 2: continue 
         if word.lower() in stop_set: continue
+        
+        # 避免重复添加 Step 1/2 已经找到的词
+        if any(k[0].lower() == word.lower() for k in keywords):
+            continue
 
-        if flag.startswith('n') or flag == 'eng': # 名词或英文 (如 PKX, JMU)
-            keywords.append((word, 3))
+        if flag.startswith('n') or flag == 'eng': # 名词或英文
+            keywords.append((word, 2)) # 稍低权重
         elif flag.startswith('v'): # 动词
-            keywords.append((word, 2))
-        else:
-            keywords.append((word, 1))
-            
+            keywords.append((word, 1)) # 最低权重
+        # 其他词性忽略
+
     # 按权重排序并去重
     keywords.sort(key=lambda x: x[1], reverse=True)
     seen = set()
@@ -267,7 +268,7 @@ class JsonHardQueryWorker(QThread):
                 if hit_count > 0:
                     if len(current_text) > 10:
                         path_str = " > ".join(current_path)
-                        # 这里依然保留基础分计算，但后续 Fusion 会忽略它
+                        # 基础分 + 命中奖励
                         score = 10.0 + (hit_count * 2.0)
                         
                         results.append({
@@ -275,7 +276,7 @@ class JsonHardQueryWorker(QThread):
                             "content": current_text,
                             "path": path_str,
                             "score": score,
-                            "hit_count": hit_count, # 记录命中数供后续分析
+                            "hit_count": hit_count,
                             "source": "JSON_Source" 
                         })
 
@@ -291,9 +292,8 @@ class JsonHardQueryWorker(QThread):
                 self.finished_signal.emit([], "JSON 查询已中断")
                 return
 
-            # 简单按照命中数预排序
             results.sort(key=lambda x: x['score'], reverse=True)
-            top_results = results[:20] # 取前20做候选
+            top_results = results[:20] 
             
             self.finished_signal.emit(top_results, f"JSON 原文检索命中: {len(top_results)} 条 (关键词: {self.keywords})")
             
@@ -308,21 +308,21 @@ class RecallWorker(QThread):
     finish_signal = pyqtSignal(bool)      
 
     def __init__(self, query_text, db_path, json_path, search_mode="smart", summary_model="DeepSeek-R1", 
-                 doc_type="不指定类型", stopwords=None):
+                 doc_type="不指定类型", stopwords=None, airline_names=None):
         super().__init__()
         self.original_query = query_text 
         self.search_query = query_text   
         self.db_path = db_path
         self.json_path = json_path
-        self.search_mode = search_mode # smart, precise, fuzzy
-        self.summary_model = summary_model # DeepSeek-R1, X1-70B-thinking, etc.
-        self.doc_type = doc_type # Feature: Document Type
-        self.stopwords = stopwords if stopwords else [] # Feature: Stopwords
+        self.search_mode = search_mode 
+        self.summary_model = summary_model 
+        self.doc_type = doc_type 
+        self.stopwords = stopwords if stopwords else []
+        self.airline_names = airline_names if airline_names else [] # Step 1 Dictionary
         
         self.page_index = PageIndexLoader()
         self.json_search_results = [] 
         
-        # 中断控制
         self._is_interrupted = False
         self._json_worker = None
 
@@ -332,7 +332,7 @@ class RecallWorker(QThread):
         self._is_interrupted = True
         if self._json_worker:
             self._json_worker.stop()
-            self._json_worker.wait(100) # 尝试等待一下子线程
+            self._json_worker.wait(100) 
 
     def log(self, msg):
         timestamp = time.strftime("%H:%M:%S")
@@ -342,18 +342,16 @@ class RecallWorker(QThread):
         self.json_search_results = results
         self.log(f"📄 {msg}")
 
-    # --- Step 0: Query Rewrite (DeepSeek V3) ---
+    # --- Step 0: Query Rewrite ---
     def rewrite_query(self, original_query):
         if self._is_interrupted: return None
 
-        # 模糊模式下强制重写，精确模式下跳过重写以保持精准
         if self.search_mode == "precise":
             self.log("⏩ 精准模式：跳过查询重写")
             return original_query
 
         self.log(f"🧠 正在请求 DeepSeek-V3 进行语义重写 (类型偏好: {self.doc_type})...")
         
-        # 【Feature】注入 doc_type 到用户提示
         doc_type_hint = ""
         if self.doc_type and self.doc_type != "不指定类型":
             doc_type_hint = f"\n\n[Important Context]: The user explicitly expects content from document type: '{self.doc_type}'. Please refine the query to imply this context."
@@ -364,7 +362,7 @@ class RecallWorker(QThread):
             {"role": "user", "content": f"用户查询：\n{original_query}{doc_type_hint}\n\n请输出重写后的查询："}
         ]
         payload = {
-            "model": DEEPSEEK_V3_MODEL_NAME, # Rewrite 总是用 V3 以保证速度
+            "model": DEEPSEEK_V3_MODEL_NAME, 
             "messages": messages,
             "temperature": 0.7, 
             "stream": False     
@@ -414,8 +412,6 @@ class RecallWorker(QThread):
         if not candidates_text_list or self._is_interrupted:
             return []
         
-        # 【Feature】虽然 BGE Rerank API 通常只接受 query，但为了实现“软约束”，
-        # 我们将类型意图拼接到 Query 中，让语义模型感知到偏好。
         rerank_query = query
         if self.doc_type and self.doc_type != "不指定类型":
             rerank_query = f"{query} (Prefer document type: {self.doc_type})"
@@ -434,7 +430,6 @@ class RecallWorker(QThread):
             start_time = time.time()
             if self._is_interrupted: return None
             
-            # ================= 修复核心：增加超时时间到 120s =================
             response = requests.post(RERANK_API_URL, headers=headers, json=payload, verify=False, timeout=120)
             
             if response.status_code == 200:
@@ -459,7 +454,7 @@ class RecallWorker(QThread):
             self.log(f"⚠️ Reranker 调用异常: {str(e)}")
             return None
 
-    # --- Step 4: LLM Summary (流式 + Multi-Model 支持) ---
+    # --- Step 4: LLM Summary ---
     def call_deepseek_summary(self, user_original_query, top_results):
         if self._is_interrupted: return
 
@@ -467,15 +462,13 @@ class RecallWorker(QThread):
         self.log(f"🧠 正在请求 {target_model} 生成最终回答 (Stream=True)...")
         self.summary_signal.emit(f"> 🚀 **{target_model} 已连接，准备生成...**\n\n")
 
-        # 【Feature】根据 Doc Type 动态注入 System Prompt
         current_system_prompt = DEEPSEEK_R1_BASE_PROMPT
         if self.doc_type and self.doc_type != "不指定类型":
             doc_type_constraint = f"""
 \n⚠️【文档类型强制偏好】
 用户期望的答案主要来自文档类型：【{self.doc_type}】。
 1. 回答时请优先参考该类型的内容。
-2. 但如果跨类型内容（如其他文档）明显有助于回答问题，请合理补充，不要遗漏关键信息。
-3. 这是一个偏好设置（Bias），而非绝对过滤。
+2. 但如果跨类型内容明显有助于回答问题，请合理补充。
 """
             current_system_prompt += doc_type_constraint
 
@@ -506,7 +499,6 @@ Content:
         try:
             if self._is_interrupted: return
 
-            # 总结生成也给足超时时间
             response = requests.post(DEEPSEEK_API_URL, headers=headers, json=payload, verify=False, stream=True, timeout=120)
             
             if response.status_code == 200:
@@ -530,7 +522,6 @@ Content:
                                 json_chunk = json.loads(data_str)
                                 delta = json_chunk['choices'][0]['delta']
                                 
-                                # === Thinking Process 捕获 (适用于 R1, X1-thinking 等支持 reasoning_content 的模型) ===
                                 current_reasoning_delta = delta.get('reasoning_content', '')
                                 current_content_delta = delta.get('content', '')
                                 updated = False
@@ -548,8 +539,6 @@ Content:
 
                                 if updated:
                                     formatted_output = ""
-                                    
-                                    # 实时展示思考过程
                                     if full_reasoning:
                                         clean_reasoning = full_reasoning.replace('\n', '\n> ')
                                         formatted_output += f"> 🧠 **Thinking Process:**\n> {clean_reasoning}\n\n"
@@ -573,34 +562,27 @@ Content:
             self.log(f"❌ DeepSeek 调用异常: {str(e)}")
             self.summary_signal.emit(f"⚠️ 总结生成失败: {str(e)}")
 
-    # --- 核心算法: RRF Fusion + Content Deduplication ---
+    # --- 核心算法: RRF Fusion ---
     def apply_rrf_fusion(self, vector_items, json_items, k=60):
-        """
-        倒数排名融合算法 (Reciprocal Rank Fusion)
-        """
         fused_scores = defaultdict(float)
         item_map = {}
         
-        # 1. 处理 Vector 结果
+        # 1. Vector Results
         for rank, item in enumerate(vector_items):
             doc_id = item['id']
             item_map[doc_id] = item
-            # Vector 权重默认 1.0
             fused_scores[doc_id] += 1.0 / (k + rank + 1)
             
-        # 2. 处理 JSON 结果
-        # 动态路由逻辑
+        # 2. JSON Results (Boost Logic)
         is_precise = is_precise_intent(self.original_query)
-        
-        # 权重调节因子
         json_boost = 1.0
         if self.search_mode == 'precise':
-            json_boost = 5.0 # 强制优先
+            json_boost = 5.0 
         elif self.search_mode == 'smart' and is_precise:
             self.log("💡 动态路由: 检测到精确代码/航班号，自动提升 JSON 权重")
-            json_boost = 3.0 # 智能提升
+            json_boost = 3.0 
         elif self.search_mode == 'fuzzy':
-            json_boost = 0.5 # 降低权重
+            json_boost = 0.5 
 
         for rank, item in enumerate(json_items):
             doc_id = item['id']
@@ -608,17 +590,14 @@ Content:
                 item_map[doc_id] = item
                 item_map[doc_id]['debug_score'] = "JSON_New"
             
-            # JSON 融合
             fused_scores[doc_id] += json_boost * (1.0 / (k + rank + 1))
-            
-            # 标记来源
             if "JSON" not in item_map[doc_id].get('source', ''):
                 item_map[doc_id]['source'] = "MIXED (Vec+JSON)"
 
-        # 3. 排序
+        # 3. Sort
         sorted_doc_ids = sorted(fused_scores.keys(), key=lambda x: fused_scores[x], reverse=True)
         
-        # 4. === 新增：内容指纹去重 ===
+        # 4. Fingerprint Deduplication
         final_results = []
         seen_fingerprints = set()
         
@@ -626,7 +605,6 @@ Content:
             item = item_map[doc_id]
             item['final_score'] = fused_scores[doc_id]
             
-            # 计算内容指纹 (MD5)
             content_fingerprint = get_text_hash(item.get('content', ''))
             
             if content_fingerprint in seen_fingerprints:
@@ -641,7 +619,7 @@ Content:
         try:
             self._is_interrupted = False
 
-            # 0. 加载 PageIndex 
+            # 0. Load PageIndex
             has_pageindex = False
             if self.json_path:
                 self.log(f"加载 PageIndex: {os.path.basename(self.json_path)}...")
@@ -653,12 +631,17 @@ Content:
             
             if self._is_interrupted: return
 
-            # --- 并发步骤: 启动 JSON 硬查询线程 ---
+            # --- Concurrent Step: JSON Hard Query (Three-Step Enabled) ---
             self._json_worker = None
             if self.json_path and self.search_mode != 'fuzzy': 
-                # 【Feature】传入 Stopwords
-                keywords = extract_keywords_with_jieba(self.original_query, self.stopwords)
-                self.log(f"🔍 提取关键词: {keywords}")
+                # 【Update】传入 airline_names 和 stopwords
+                keywords = extract_keywords_with_jieba(
+                    self.original_query, 
+                    self.stopwords, 
+                    self.airline_names
+                )
+                self.log(f"🔍 [三步走策略] 提取关键词: {keywords}")
+                
                 if keywords:
                     self.log("🚀 启动 JSON 原文硬查询线程...")
                     self._json_worker = JsonHardQueryWorker(self.json_path, keywords)
@@ -669,9 +652,7 @@ Content:
 
             # --- Step 0: Query Rewrite ---
             rewritten = self.rewrite_query(self.original_query)
-            # 如果被中断，rewritten 可能是 None
             if self._is_interrupted: return
-            
             self.search_query = rewritten if rewritten else self.original_query
 
             # --- Step 1: Query Vector ---
@@ -707,13 +688,11 @@ Content:
                 raw_candidates.sort(key=lambda x: x["vec_score"], reverse=True)
                 top_candidates_raw = raw_candidates[:40] 
                 
-                # --- Step 2: 填充内容 ---
                 rerank_input_texts = []
                 
                 for item in top_candidates_raw:
                     if self._is_interrupted: break
                     sec_id = item["section_id"]
-                    # 优先从 PageIndex 内存拿，拿不到查 DB
                     node_info = self.page_index.get_node(sec_id) if has_pageindex else None
                     
                     raw_text = ""
@@ -739,7 +718,7 @@ Content:
                     display_content = f"[Summary]\n{summary_text}\n\n[Text]\n{raw_text}" if summary_text else raw_text
                     
                     vector_candidates.append({
-                        "id": sec_id, # 统一使用 section_id / node_id 作为 RRF 的 Key
+                        "id": sec_id, 
                         "vec_score": item["vec_score"],
                         "path": path_str,
                         "content": display_content,
@@ -748,7 +727,6 @@ Content:
                 
                 conn.close()
                 
-                # --- Step 3: Rerank Vector Results ---
                 if not self._is_interrupted and vector_candidates:
                     rerank_scores = self.rerank_with_bge(self.search_query, rerank_input_texts)
                     if rerank_scores:
@@ -758,16 +736,15 @@ Content:
                         vector_candidates.sort(key=lambda x: x.get('rerank_score', 0), reverse=True)
                         self.log(f"✅ Vector 通道准备就绪: {len(vector_candidates)} 条 (已 Rerank)")
 
-            # --- Step 4: 等待 JSON Search ---
+            # --- Wait for JSON Search ---
             json_results = []
             if self._json_worker:
                 self.log("⏳ 等待 JSON 原文硬查询线程完成...")
-                # 循环等待，以便能够响应 Stop
                 while self._json_worker.isRunning():
                     if self._is_interrupted:
                         self._json_worker.stop()
                         break
-                    self._json_worker.wait(100) # Wait 100ms chunks
+                    self._json_worker.wait(100) 
 
                 json_results = self.json_search_results
             
@@ -775,21 +752,19 @@ Content:
                 self.finish_signal.emit(False)
                 return
 
-            # --- Step 5: 执行 RRF 融合 (含指纹去重) ---
+            # --- RRF Fusion ---
             self.log("⚖️ 执行 RRF 融合与内容指纹去重...")
             final_top_results = self.apply_rrf_fusion(vector_candidates, json_results)
             
-            # 取 Top 12
             final_top_results = final_top_results[:12]
             self.log(f"✅ 最终召回: {len(final_top_results)} 条唯一内容")
             
-            # 重新打 Rank 标签
             for idx, res in enumerate(final_top_results):
                 res['rank'] = idx + 1
                 
             self.result_signal.emit(final_top_results)
             
-            # --- Step 6: DeepSeek Summary ---
+            # --- LLM Summary ---
             self.call_deepseek_summary(self.original_query, final_top_results)
             
             if self._is_interrupted:

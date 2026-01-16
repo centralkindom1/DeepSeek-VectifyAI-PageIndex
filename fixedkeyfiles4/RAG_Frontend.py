@@ -14,17 +14,27 @@ try:
 except ImportError:
     docx = None
 
+# 引入必要的 PyQt5 组件 (新增 QDialog, QListWidget 等)
 from PyQt5.QtWidgets import (QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout, 
                              QLabel, QLineEdit, QPushButton, QTextEdit, QFileDialog, 
                              QMessageBox, QSplitter, QComboBox, QCheckBox, QRadioButton, 
-                             QButtonGroup, QFrame, QGroupBox, QInputDialog)
+                             QButtonGroup, QFrame, QGroupBox, QInputDialog, QDialog, QListWidget)
 
-# 修正点：QTextCursor 移至 QtGui，QtCore 只保留核心组件
 from PyQt5.QtCore import Qt, QSettings
 from PyQt5.QtGui import QTextCursor, QColor
 
 # 引入 Backend 逻辑
 from RAG_Backend import RecallWorker
+
+# ================= 默认航司列表 (三步走策略 - Step 1 数据源) =================
+DEFAULT_AIRLINES = [
+    "中国国际航空", "南方航空", "东方航空", "海南航空",
+    "厦门航空", "四川航空", "深圳航空", "春秋航空",
+    "吉祥航空", "首都航空", "山东航空", "天津航空",
+    "上海航空", "祥鹏航空", "西部航空", "长龙航空",
+    "Air China", "China Southern", "China Eastern"
+]
+AIRLINE_DICT_FILE = "airline_dict.txt"
 
 # ================= 样式表 (Dark Mode) =================
 STYLESHEET = """
@@ -50,7 +60,103 @@ QFrame#Divider { border: 1px solid #444444; }
 QRadioButton#ModeSmart { color: #4facfe; }
 QRadioButton#ModePrecise { color: #00f260; }
 QRadioButton#ModeFuzzy { color: #ff9a9e; }
+/* ListWidget for Dict Editor */
+QListWidget { background-color: #333; color: white; border: 1px solid #555; }
 """
+
+# ================= 航司字典编辑器窗口 =================
+class AirlineDictEditor(QDialog):
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setWindowTitle("管理航司字典 (airline_dict.txt)")
+        self.resize(400, 500)
+        self.setStyleSheet(STYLESHEET)
+        self.init_ui()
+        self.load_data()
+
+    def init_ui(self):
+        layout = QVBoxLayout(self)
+        
+        # 输入区
+        input_layout = QHBoxLayout()
+        self.entry_new = QLineEdit()
+        self.entry_new.setPlaceholderText("输入新航司名称...")
+        btn_add = QPushButton("➕ 添加")
+        btn_add.clicked.connect(self.add_item)
+        btn_add.setFixedWidth(80)
+        input_layout.addWidget(self.entry_new)
+        input_layout.addWidget(btn_add)
+        layout.addLayout(input_layout)
+
+        # 列表区
+        self.list_widget = QListWidget()
+        layout.addWidget(self.list_widget)
+
+        # 底部按钮
+        btn_layout = QHBoxLayout()
+        btn_del = QPushButton("❌ 删除选中")
+        btn_del.setStyleSheet("background-color: #c0392b;")
+        btn_del.clicked.connect(self.delete_item)
+        
+        btn_save = QPushButton("💾 保存并关闭")
+        btn_save.setStyleSheet("background-color: #27ae60;")
+        btn_save.clicked.connect(self.save_and_close)
+        
+        btn_layout.addWidget(btn_del)
+        btn_layout.addStretch()
+        btn_layout.addWidget(btn_save)
+        layout.addLayout(btn_layout)
+
+    def load_data(self):
+        # 确保文件存在
+        if not os.path.exists(AIRLINE_DICT_FILE):
+            try:
+                with open(AIRLINE_DICT_FILE, "w", encoding="utf-8") as f:
+                    for airline in DEFAULT_AIRLINES:
+                        f.write(airline + "\n")
+            except Exception:
+                pass
+        
+        # 读取
+        try:
+            with open(AIRLINE_DICT_FILE, "r", encoding="utf-8") as f:
+                lines = f.readlines()
+                for line in lines:
+                    text = line.strip()
+                    if text:
+                        self.list_widget.addItem(text)
+        except Exception as e:
+            QMessageBox.warning(self, "Error", f"读取字典失败: {str(e)}")
+
+    def add_item(self):
+        text = self.entry_new.text().strip()
+        if not text:
+            return
+        # 查重
+        items = [self.list_widget.item(i).text() for i in range(self.list_widget.count())]
+        if text in items:
+            QMessageBox.warning(self, "提示", "该关键词已存在")
+            return
+        
+        self.list_widget.addItem(text)
+        self.entry_new.clear()
+
+    def delete_item(self):
+        row = self.list_widget.currentRow()
+        if row >= 0:
+            self.list_widget.takeItem(row)
+
+    def save_and_close(self):
+        items = [self.list_widget.item(i).text() for i in range(self.list_widget.count())]
+        try:
+            with open(AIRLINE_DICT_FILE, "w", encoding="utf-8") as f:
+                for item in items:
+                    f.write(item + "\n")
+            QMessageBox.information(self, "成功", "航司字典已更新！")
+            self.accept()
+        except Exception as e:
+            QMessageBox.critical(self, "错误", f"保存失败: {str(e)}")
+
 
 # ================= 主界面 =================
 class RAGRecallApp(QMainWindow):
@@ -64,10 +170,23 @@ class RAGRecallApp(QMainWindow):
         self.cached_results = []
         self.cached_summary = ""
         self.cached_query = ""
-        self.worker = None # 保持 worker 引用
+        self.worker = None 
+        
+        # 初始化字典文件
+        self.ensure_airline_dict()
         
         self.init_ui()
         
+    def ensure_airline_dict(self):
+        """确保航司字典文件存在"""
+        if not os.path.exists(AIRLINE_DICT_FILE):
+            try:
+                with open(AIRLINE_DICT_FILE, "w", encoding="utf-8") as f:
+                    for airline in DEFAULT_AIRLINES:
+                        f.write(airline + "\n")
+            except:
+                pass
+
     def init_ui(self):
         central_widget = QWidget()
         self.setCentralWidget(central_widget)
@@ -125,7 +244,7 @@ class RAGRecallApp(QMainWindow):
         
         mode_layout.addSpacing(20)
 
-        # 2.2 Doc Type Selection (Feature 3)
+        # 2.2 Doc Type Selection
         mode_layout.addWidget(QLabel("📂 文档偏好:"))
         self.combo_doc_type = QComboBox()
         self.combo_doc_type.addItems([
@@ -142,10 +261,9 @@ class RAGRecallApp(QMainWindow):
 
         mode_layout.addSpacing(20)
 
-        # 2.3 Model Selection (Updated for Multi-Model)
+        # 2.3 Model Selection
         mode_layout.addWidget(QLabel("🧠 模型:"))
         self.combo_model = QComboBox()
-        # 更新后的模型列表
         self.combo_model.addItems([
             "DeepSeek-R1", 
             "DeepSeek-V3", 
@@ -158,43 +276,45 @@ class RAGRecallApp(QMainWindow):
         mode_layout.addStretch()
         left_layout.addLayout(mode_layout)
 
-        # 3. Stopwords Management (Feature 1)
-        stopwords_group = QGroupBox("🚫 Stopwords Management")
-        stopwords_layout = QVBoxLayout(stopwords_group)
+        # 3. Knowledge Config (Stopwords + Airline Dict)
+        config_group = QGroupBox("🔧 知识库配置 (字典/停用词)")
+        config_layout = QVBoxLayout(config_group)
         
         # 3.1 Input Area
         self.stopwords_edit = QTextEdit()
-        self.stopwords_edit.setPlaceholderText("在此输入停用词，以逗号分隔 (例如: 的,是,test,000)...")
+        self.stopwords_edit.setPlaceholderText("在此输入停用词，以逗号分隔...")
         self.stopwords_edit.setMaximumHeight(50)
-        stopwords_layout.addWidget(self.stopwords_edit)
+        config_layout.addWidget(self.stopwords_edit)
         
         # 3.2 Control Buttons
         sw_btn_layout = QHBoxLayout()
         
         self.sw_name_edit = QLineEdit()
-        self.sw_name_edit.setPlaceholderText("配置名称 (如: default)")
-        self.sw_name_edit.setFixedWidth(120)
+        self.sw_name_edit.setPlaceholderText("Config Name")
+        self.sw_name_edit.setFixedWidth(100)
         sw_btn_layout.addWidget(self.sw_name_edit)
         
-        btn_sw_save = QPushButton("💾 Save")
+        btn_sw_save = QPushButton("💾 Save Stopwords")
         btn_sw_save.clicked.connect(self.save_stopwords)
         btn_sw_save.setFixedHeight(28)
         sw_btn_layout.addWidget(btn_sw_save)
         
-        btn_sw_load = QPushButton("📂 Import JSON")
+        btn_sw_load = QPushButton("📂 Import")
         btn_sw_load.clicked.connect(self.import_stopwords)
         btn_sw_load.setFixedHeight(28)
         sw_btn_layout.addWidget(btn_sw_load)
         
-        btn_sw_update = QPushButton("🔄 Update/Apply")
-        btn_sw_update.clicked.connect(self.update_stopwords_ui) # 仅视觉确认，实际在 Start 时读取
-        btn_sw_update.setFixedHeight(28)
-        sw_btn_layout.addWidget(btn_sw_update)
+        # 新增：航司字典按钮
+        btn_airline = QPushButton("✈️ 管理航司字典")
+        btn_airline.clicked.connect(self.open_airline_editor)
+        btn_airline.setFixedHeight(28)
+        btn_airline.setStyleSheet("background-color: #8e44ad; color: white;")
+        sw_btn_layout.addWidget(btn_airline)
         
         sw_btn_layout.addStretch()
-        stopwords_layout.addLayout(sw_btn_layout)
+        config_layout.addLayout(sw_btn_layout)
         
-        left_layout.addWidget(stopwords_group)
+        left_layout.addWidget(config_group)
 
         # 4. Query Input
         left_layout.addWidget(QLabel("用户查询 (Query):"))
@@ -203,7 +323,7 @@ class RAGRecallApp(QMainWindow):
         self.query_input.setMaximumHeight(60)
         left_layout.addWidget(self.query_input)
         
-        # 5. Search & Stop Buttons (Feature 2)
+        # 5. Search & Stop Buttons
         btn_layout = QHBoxLayout()
         
         self.btn_search = QPushButton("🚀 执行全流程 (Recall -> RRF -> Summary)")
@@ -215,7 +335,7 @@ class RAGRecallApp(QMainWindow):
         self.btn_stop = QPushButton("🛑 停止运行")
         self.btn_stop.setObjectName("StopBtn")
         self.btn_stop.setFixedHeight(45)
-        self.btn_stop.setEnabled(False) # 初始禁用
+        self.btn_stop.setEnabled(False)
         self.btn_stop.clicked.connect(self.stop_recall)
         btn_layout.addWidget(self.btn_stop)
         
@@ -338,24 +458,34 @@ class RAGRecallApp(QMainWindow):
             """
         self.result_display.setHtml(html)
 
-    # ================= Stopwords 功能 =================
+    # ================= 知识库配置功能 (Stopwords + Airline) =================
     
+    def open_airline_editor(self):
+        """打开航司字典编辑器"""
+        editor = AirlineDictEditor(self)
+        editor.exec_() # 模态运行
+
     def get_current_stopwords(self):
         text = self.stopwords_edit.toPlainText().strip()
         if not text:
             return []
-        # 按逗号分隔，并去除空白
         return [w.strip() for w in text.replace('，', ',').split(',') if w.strip()]
-
-    def update_stopwords_ui(self):
-        sw_list = self.get_current_stopwords()
-        self.log(f"ℹ️ Stopwords updated: {len(sw_list)} words ready to use.")
-        self.settings.setValue("last_stopwords", self.stopwords_edit.toPlainText())
+    
+    def get_airline_list(self):
+        """读取航司字典"""
+        airlines = []
+        if os.path.exists(AIRLINE_DICT_FILE):
+            try:
+                with open(AIRLINE_DICT_FILE, 'r', encoding='utf-8') as f:
+                    airlines = [line.strip() for line in f if line.strip()]
+            except:
+                pass
+        return airlines
 
     def save_stopwords(self):
         name = self.sw_name_edit.text().strip()
         if not name:
-            QMessageBox.warning(self, "Warning", "Please enter a profile name (e.g., 'law_docs').")
+            QMessageBox.warning(self, "Warning", "Please enter a profile name.")
             return
         
         sw_list = self.get_current_stopwords()
@@ -376,7 +506,7 @@ class RAGRecallApp(QMainWindow):
                 with open(path, 'r', encoding='utf-8') as f:
                     data = json.load(f)
                 
-                if isinstance(data, list): # 兼容简单列表格式
+                if isinstance(data, list):
                     sw_list = data
                 elif isinstance(data, dict) and "stopwords" in data:
                     sw_list = data["stopwords"]
@@ -395,22 +525,18 @@ class RAGRecallApp(QMainWindow):
         json_path = self.json_path_edit.text().strip()
         query = self.query_input.toPlainText().strip()
         
-        # 1. 获取模式
         mode_id = self.mode_group.checkedId()
         search_mode = "smart" 
         if mode_id == 2: search_mode = "precise"
         elif mode_id == 3: search_mode = "fuzzy"
 
-        # 2. 获取模型 (Updated)
         summary_model = self.combo_model.currentText()
-        
-        # 3. 获取文档类型 (Feature)
         doc_type = self.combo_doc_type.currentText()
-
-        # 4. 获取停用词 (Feature)
         stopwords = self.get_current_stopwords()
         
-        # 验证
+        # 读取航司字典 (Step 1 数据)
+        airline_names = self.get_airline_list()
+        
         if not db_path or not os.path.exists(db_path):
             QMessageBox.warning(self, "Error", "无效的数据库路径")
             return
@@ -423,17 +549,17 @@ class RAGRecallApp(QMainWindow):
         
         # UI 状态更新
         self.btn_search.setEnabled(False)
-        self.btn_stop.setEnabled(True) # 启用停止按钮
+        self.btn_stop.setEnabled(True) 
         self.result_display.clear()
         self.summary_display.clear() 
         self.console_output.clear()
         
         mode_text = {"smart": "🔵 智能融合", "precise": "🟢 精准查表", "fuzzy": "🟡 模糊咨询"}[search_mode]
         self.log(f"🚀 初始化任务... | 策略: {mode_text} | 模型: {summary_model}")
-        self.log(f"ℹ️ 文档类型偏好: {doc_type} | Stopwords: {len(stopwords)} 个")
+        self.log(f"ℹ️ 文档类型: {doc_type} | 航司字典: {len(airline_names)} 个词 | Stopwords: {len(stopwords)} 个")
         
-        # 实例化后端 Worker
-        self.worker = RecallWorker(query, db_path, json_path, search_mode, summary_model, doc_type, stopwords)
+        # 实例化后端 Worker (传入 airline_names)
+        self.worker = RecallWorker(query, db_path, json_path, search_mode, summary_model, doc_type, stopwords, airline_names)
         self.worker.log_signal.connect(self.log)
         self.worker.result_signal.connect(self.display_results)
         self.worker.summary_signal.connect(self.update_summary) 
@@ -441,7 +567,6 @@ class RAGRecallApp(QMainWindow):
         self.worker.start()
 
     def stop_recall(self):
-        """Feature: 中断任务"""
         if self.worker and self.worker.isRunning():
             self.log("🛑 用户点击停止，正在请求 Backend 中断...")
             self.worker.stop()
@@ -457,7 +582,6 @@ class RAGRecallApp(QMainWindow):
             self.log("✅ 全流程结束")
         else:
             self.log("❌ 流程被中断或发生错误")
-            # 如果没有总结，提示一下
             if not self.cached_summary:
                 self.summary_display.setText("[ Process Stopped / Failed ]")
 
@@ -477,7 +601,7 @@ class RAGRecallApp(QMainWindow):
             
             if fmt == "xlsx":
                 if pd is None:
-                    raise ImportError("缺少 pandas 或 openpyxl 库，请 pip install pandas openpyxl")
+                    raise ImportError("缺少 pandas 或 openpyxl 库")
                 
                 data_rows = []
                 for item in self.cached_results:
@@ -551,7 +675,7 @@ class RAGRecallApp(QMainWindow):
 
             elif fmt == "docx":
                 if docx is None:
-                    raise ImportError("缺少 python-docx 库，请 pip install python-docx")
+                    raise ImportError("缺少 python-docx 库")
                 
                 doc = docx.Document()
                 doc.add_heading('RAG Analysis Report', 0)

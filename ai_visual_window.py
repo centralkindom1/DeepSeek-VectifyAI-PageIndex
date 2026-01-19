@@ -1,9 +1,10 @@
+# -*- coding: utf-8 -*-
 import sys
 import random
 import math
 from PyQt5.QtWidgets import QWidget, QApplication
 from PyQt5.QtCore import Qt, QTimer, QPointF
-from PyQt5.QtGui import QPainter, QColor, QPen, QBrush, QFont, QFontDatabase
+from PyQt5.QtGui import QPainter, QColor, QPen, QBrush, QFont, QFontMetrics
 
 class Particle:
     def __init__(self, w, h):
@@ -36,9 +37,14 @@ class AIVisualWindow(QWidget):
         self.timer.timeout.connect(self.update_animation)
         self.timer.start(30) # 30ms 刷新率
         
-        # 数据流缓冲区
-        self.stream_text = []
-        self.max_lines = 15
+        # 文本缓冲区
+        self.display_lines = []
+        self.current_line = ""
+        self.max_lines = 18 # 适应窗口高度
+        
+        # 字体设置
+        self.font = QFont("Consolas", 10)
+        self.font.setBold(True)
         
         # 拖动窗口逻辑
         self.old_pos = None
@@ -49,20 +55,29 @@ class AIVisualWindow(QWidget):
             p.move(w, h)
         self.update() # 触发 paintEvent
 
-    def add_stream_char(self, char):
-        """接收来自主进程的 AI 字符"""
-        # 处理换行
-        if not self.stream_text:
-            self.stream_text.append("")
+    def add_stream_char(self, text_chunk):
+        """处理流式文本，增加自动换行逻辑"""
+        if not text_chunk: return
+
+        # 简单的宽度计算来进行软换行
+        fm = QFontMetrics(self.font)
+        max_width = self.width() - 40 # Padding
+
+        for char in text_chunk:
+            if char == '\n':
+                self.display_lines.append(self.current_line)
+                self.current_line = ""
+            else:
+                if fm.width(self.current_line + char) > max_width:
+                    self.display_lines.append(self.current_line)
+                    self.current_line = char
+                else:
+                    self.current_line += char
         
-        if char == "\n":
-            self.stream_text.append("")
-        else:
-            self.stream_text[-1] += char
+        # 保持缓冲区大小
+        while len(self.display_lines) > self.max_lines:
+            self.display_lines.pop(0)
         
-        # 保持行数限制
-        if len(self.stream_text) > self.max_lines:
-            self.stream_text.pop(0)
         self.update()
 
     def paintEvent(self, event):
@@ -70,7 +85,7 @@ class AIVisualWindow(QWidget):
         painter.setRenderHint(QPainter.Antialiasing)
         
         # 1. 绘制半透明黑色背景 (Cyberpunk Dark)
-        painter.fillRect(self.rect(), QColor(10, 15, 20, 240))
+        painter.fillRect(self.rect(), QColor(10, 15, 20, 245))
         
         # 2. 绘制边框
         pen = QPen(QColor(0, 255, 200))
@@ -93,24 +108,30 @@ class AIVisualWindow(QWidget):
             painter.drawEllipse(QPointF(p1.x, p1.y), p1.size, p1.size)
 
         # 4. 绘制 AI 文本流
-        painter.setPen(QPen(QColor(200, 255, 200)))
-        font = QFont("Consolas", 11)
-        font.setBold(True)
-        painter.setFont(font)
+        painter.setFont(self.font)
         
-        line_height = 20
+        line_height = 22
         start_y = 60
         
         # 标题
         painter.setPen(QPen(QColor(0, 255, 200)))
-        painter.drawText(20, 30, "⚡ LIVE AI REASONING STREAM ⚡")
+        title_font = QFont("Segoe UI", 12)
+        title_font.setBold(True)
+        painter.setFont(title_font)
+        painter.drawText(20, 35, "⚡ DEEPSEEK NEURAL STREAM ⚡")
         
         # 内容
+        painter.setFont(self.font)
         painter.setPen(QPen(QColor(0, 255, 100)))
-        for i, line in enumerate(self.stream_text):
-            # 给最后一行加光标效果
-            cursor = "█" if i == len(self.stream_text)-1 else ""
-            painter.drawText(20, start_y + i * line_height, line + cursor)
+        
+        # 绘制历史行
+        for i, line in enumerate(self.display_lines):
+            painter.drawText(20, start_y + i * line_height, line)
+            
+        # 绘制当前行 + 光标
+        current_y = start_y + len(self.display_lines) * line_height
+        if len(self.display_lines) < self.max_lines:
+            painter.drawText(20, current_y, self.current_line + "█")
 
     # 允许鼠标拖动无边框窗口
     def mousePressEvent(self, event):
@@ -131,5 +152,5 @@ if __name__ == "__main__":
     win = AIVisualWindow()
     win.show()
     # 测试数据流
-    QTimer.singleShot(1000, lambda: win.add_stream_char("Initializing Neural Link..."))
+    QTimer.singleShot(500, lambda: win.add_stream_char("Initializing Neural Link...\nConnecting to DeepSeek V3...\nStream established."))
     sys.exit(app.exec_())

@@ -12,6 +12,12 @@ import jieba
 import jieba.posseg as pseg
 from collections import defaultdict
 
+# 尝试导入 FAISS
+try:
+    import faiss
+except ImportError:
+    faiss = None
+
 # PyQt Core 组件用于线程和信号
 from PyQt5.QtCore import QThread, pyqtSignal, QMutex, QMutexLocker
 
@@ -20,18 +26,18 @@ urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 os.environ['CURL_CA_BUNDLE'] = ''
 
 # API 配置 (硬编码 Key)
-API_KEY = "your api key"
+API_KEY = "YOUR API KEY"
 
 # 1. Embedding API
-EMBEDDING_API_URL = "https://www.bge.com:18080/v1/embeddings" 
+EMBEDDING_API_URL = "https://WWW.BGE.COM.cn:18080/v1/embeddings" 
 EMBEDDING_MODEL_NAME = "bge-m3"
 
 # 2. Rerank API
-RERANK_API_URL = "https://www.bgereranker.com:18080/v1/rerank" 
+RERANK_API_URL = "https://WWW.BGE.COM.cn:18080/v1/rerank" 
 RERANK_MODEL_NAME = "bge-reranker-v2-m3"
 
 # 3. DeepSeek/LLM API
-DEEPSEEK_API_URL = "https://www.deepseek.com:18080/v1/chat/completions"
+DEEPSEEK_API_URL = "https://WWW.DEEPSEEK.COM:18080/v1/chat/completions"
 DEEPSEEK_V3_MODEL_NAME = "DeepSeek-V3"
 
 # ================= System Prompts =================
@@ -308,7 +314,7 @@ class RecallWorker(QThread):
     finish_signal = pyqtSignal(bool)      
 
     def __init__(self, query_text, db_path, json_path, search_mode="smart", summary_model="DeepSeek-R1", 
-                 doc_type="不指定类型", stopwords=None, airline_names=None):
+                 doc_type="不指定类型", stopwords=None, airline_names=None, chunk_limit=40, use_faiss=True):
         super().__init__()
         self.original_query = query_text 
         self.search_query = query_text   
@@ -319,6 +325,8 @@ class RecallWorker(QThread):
         self.doc_type = doc_type 
         self.stopwords = stopwords if stopwords else []
         self.airline_names = airline_names if airline_names else [] # Step 1 Dictionary
+        self.chunk_limit = chunk_limit # 动态流控参数
+        self.use_faiss = use_faiss     # 【NEW】是否使用 FAISS
         
         self.page_index = PageIndexLoader()
         self.json_search_results = [] 
@@ -576,11 +584,21 @@ Content:
         # 2. JSON Results (Boost Logic)
         is_precise = is_precise_intent(self.original_query)
         json_boost = 1.0
+        
+        # --- 策略调整: 书籍模式下降低 JSON 关键词权重 ---
+        is_book_mode = self.doc_type in ["书籍/教材", "长篇论文"]
+        
         if self.search_mode == 'precise':
             json_boost = 5.0 
-        elif self.search_mode == 'smart' and is_precise:
-            self.log("💡 动态路由: 检测到精确代码/航班号，自动提升 JSON 权重")
-            json_boost = 3.0 
+        elif self.search_mode == 'smart':
+            if is_book_mode:
+                self.log("📚 检测到书籍/长文档模式：主动降低关键词权重，优先语义召回")
+                json_boost = 0.5  # 降权，防止书籍中非定义的关键词干扰
+            elif is_precise:
+                self.log("💡 动态路由: 检测到精确代码/航班号，自动提升 JSON 权重")
+                json_boost = 3.0 
+            else:
+                json_boost = 1.0
         elif self.search_mode == 'fuzzy':
             json_boost = 0.5 
 
@@ -655,7 +673,7 @@ Content:
             if self._is_interrupted: return
             self.search_query = rewritten if rewritten else self.original_query
 
-            # --- Step 1: Query Vector ---
+            # --- Step 1: Query Vector (Updated for FAISS) ---
             vector_candidates = []
             
             query_vec_list = self.get_remote_embedding(self.search_query)
@@ -668,25 +686,97 @@ Content:
                 conn = sqlite3.connect(self.db_path)
                 cursor = conn.cursor()
                 
+                # 读取向量数据
+                # 无论是 FAISS 还是 Brute-Force，我们都需要先从 DB 读取数据
+                # 优化: 如果数据量极其巨大，FAISS 应该在系统启动时预加载。
+                # 但为了代码兼容性，这里我们在每次查询时加载（适合中等规模数据）
+                
                 cursor.execute("SELECT id, embedding, section_id FROM vectors")
                 rows = cursor.fetchall()
                 
                 raw_candidates = []
-                for row in rows:
-                    if self._is_interrupted: break 
-                    v_id, emb_json, sec_id_db = row
+                
+                # === 分支逻辑: FAISS vs Brute-Force ===
+                use_faiss_now = self.use_faiss and (faiss is not None)
+                if self.use_faiss and faiss is None:
+                    self.log("⚠️ 尝试使用 FAISS 但模块未安装，自动降级为 Python 计算")
+                
+                if use_faiss_now:
                     try:
-                        doc_vec = np.array(json.loads(emb_json), dtype=np.float32)
-                        score = cosine_similarity(query_vec_np, doc_vec)
-                        raw_candidates.append({"id": v_id, "vec_score": score, "section_id": str(sec_id_db)})
-                    except: continue
+                        self.log(f"⚡ [FAISS] 正在构建索引 (数据量: {len(rows)})...")
+                        # 1. 准备数据
+                        embeddings = []
+                        ids = []
+                        section_ids = []
+                        
+                        for row in rows:
+                            v_id, emb_json, sec_id_db = row
+                            try:
+                                vec = json.loads(emb_json)
+                                embeddings.append(vec)
+                                ids.append(v_id)
+                                section_ids.append(sec_id_db)
+                            except: continue
+                        
+                        if embeddings:
+                            data_np = np.array(embeddings).astype('float32')
+                            
+                            # 2. 归一化 (确保内积等同于余弦相似度)
+                            faiss.normalize_L2(data_np)
+                            
+                            # 3. 建立索引 (IndexFlatIP = Inner Product)
+                            dim = data_np.shape[1]
+                            index = faiss.IndexFlatIP(dim)
+                            index.add(data_np)
+                            
+                            # 4. 准备查询向量
+                            q_np = np.array([query_vec_list]).astype('float32')
+                            faiss.normalize_L2(q_np)
+                            
+                            # 5. 搜索
+                            # 搜索数量：取流控限制的 2 倍以防过滤，或者直接取比较大的值
+                            search_k = min(len(embeddings), self.chunk_limit * 2) 
+                            scores, indices = index.search(q_np, search_k)
+                            
+                            # 6. 映射回结果
+                            for rank, idx in enumerate(indices[0]):
+                                if idx == -1: continue
+                                score = float(scores[0][rank])
+                                raw_candidates.append({
+                                    "id": ids[idx],
+                                    "vec_score": score,
+                                    "section_id": str(section_ids[idx])
+                                })
+                            
+                            self.log(f"⚡ [FAISS] 检索完成，耗时极短")
+                            
+                    except Exception as e:
+                        self.log(f"❌ FAISS 索引构建失败: {str(e)}，回退到暴力计算")
+                        use_faiss_now = False # Fallback logic below
+
+                # Fallback or Brute-Force Logic
+                if not use_faiss_now:
+                    self.log("🐢 [Brute-Force] 使用 Python 逐行计算余弦相似度...")
+                    for row in rows:
+                        if self._is_interrupted: break 
+                        v_id, emb_json, sec_id_db = row
+                        try:
+                            doc_vec = np.array(json.loads(emb_json), dtype=np.float32)
+                            score = cosine_similarity(query_vec_np, doc_vec)
+                            raw_candidates.append({"id": v_id, "vec_score": score, "section_id": str(sec_id_db)})
+                        except: continue
 
                 if self._is_interrupted: 
                     conn.close()
                     return
 
+                # 排序与截断 (FAISS 已经排好序了，但为了统一逻辑再排一次无妨)
                 raw_candidates.sort(key=lambda x: x["vec_score"], reverse=True)
-                top_candidates_raw = raw_candidates[:40] 
+                
+                # 【流控关键点】使用 chunk_limit 进行截断，防止 Reranker 过载
+                current_limit = self.chunk_limit
+                self.log(f"⚡ [流控] 限制向量召回数量为: {current_limit} (Mode: {self.doc_type})")
+                top_candidates_raw = raw_candidates[:current_limit] 
                 
                 rerank_input_texts = []
                 
@@ -776,5 +866,4 @@ Content:
             self.log(f"❌ 严重错误: {str(e)}")
             import traceback
             self.log(traceback.format_exc())
-
             self.finish_signal.emit(False)

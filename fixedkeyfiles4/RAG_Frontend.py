@@ -14,7 +14,7 @@ try:
 except ImportError:
     docx = None
 
-# 引入必要的 PyQt5 组件 (新增 QDialog, QListWidget 等)
+# 引入必要的 PyQt5 组件
 from PyQt5.QtWidgets import (QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout, 
                              QLabel, QLineEdit, QPushButton, QTextEdit, QFileDialog, 
                              QMessageBox, QSplitter, QComboBox, QCheckBox, QRadioButton, 
@@ -53,6 +53,7 @@ QComboBox { background-color: #3c3c3c; color: white; border: 1px solid #555; pad
 QComboBox::drop-down { border: 0px; }
 QRadioButton { color: #e0e0e0; font-weight: bold; spacing: 5px; }
 QRadioButton::indicator { width: 16px; height: 16px; }
+QCheckBox { color: #e0e0e0; font-weight: bold; spacing: 5px; }
 QGroupBox { border: 1px solid #555; margin-top: 10px; padding-top: 10px; font-weight: bold; color: #aaa; }
 QGroupBox::title { subcontrol-origin: margin; subcontrol-position: top left; padding: 0 5px; }
 QFrame#Divider { border: 1px solid #444444; }
@@ -166,7 +167,7 @@ class RAGRecallApp(QMainWindow):
         self.resize(1400, 950) 
         self.setStyleSheet(STYLESHEET)
         
-        self.settings = QSettings("MyCorp", "RAGRecall_Final_v9_MultiModel")
+        self.settings = QSettings("MyCorp", "RAGRecall_Final_v10_FAISS")
         self.cached_results = []
         self.cached_summary = ""
         self.cached_query = ""
@@ -242,24 +243,58 @@ class RAGRecallApp(QMainWindow):
         self.mode_group.addButton(self.radio_fuzzy, 3)
         mode_layout.addWidget(self.radio_fuzzy)
         
-        mode_layout.addSpacing(20)
+        mode_layout.addSpacing(15)
 
-        # 2.2 Doc Type Selection
+        # 2.2 Doc Type Selection & Dynamic Throttling
         mode_layout.addWidget(QLabel("📂 文档偏好:"))
         self.combo_doc_type = QComboBox()
         self.combo_doc_type.addItems([
             "不指定类型",
             "数据表",
             "公司公文",
+            "书籍/教材",   # 新增
+            "长篇论文",     # 新增
             "技术文档",
             "法律条文",
             "LLM OCR文档",
             "LLM生成总结"
         ])
         self.combo_doc_type.setFixedWidth(120)
+        self.combo_doc_type.currentTextChanged.connect(self.on_doc_type_changed)
         mode_layout.addWidget(self.combo_doc_type)
 
-        mode_layout.addSpacing(20)
+        # === 新增: 书籍模式下的流控 UI (默认隐藏) ===
+        self.chunk_limit_widget = QWidget()
+        self.chunk_limit_layout = QHBoxLayout(self.chunk_limit_widget)
+        self.chunk_limit_layout.setContentsMargins(0, 0, 0, 0)
+        
+        self.lbl_chunk = QLabel("切块限制:")
+        self.lbl_chunk.setStyleSheet("color: #ff9f43;") # 橙色警示
+        self.combo_chunk_limit = QComboBox()
+        self.combo_chunk_limit.addItems([
+            "15 (极速)", 
+            "25 (平衡)", 
+            "40 (深度/风险)"
+        ])
+        self.combo_chunk_limit.setFixedWidth(100)
+        self.combo_chunk_limit.setCurrentIndex(1) # 默认 25
+        
+        self.chunk_limit_layout.addWidget(self.lbl_chunk)
+        self.chunk_limit_layout.addWidget(self.combo_chunk_limit)
+        
+        mode_layout.addWidget(self.chunk_limit_widget)
+        self.chunk_limit_widget.hide() # 初始隐藏
+
+        mode_layout.addSpacing(10)
+        
+        # === 新增: FAISS 加速开关 ===
+        self.chk_use_faiss = QCheckBox("⚡ 启用 FAISS 加速")
+        self.chk_use_faiss.setChecked(True)
+        self.chk_use_faiss.setStyleSheet("color: #00e676;") # 亮绿色
+        self.chk_use_faiss.setToolTip("默认启用。如果取消勾选，将使用原有的逐行 JSON 解析+暴力计算模式。")
+        mode_layout.addWidget(self.chk_use_faiss)
+
+        mode_layout.addSpacing(15)
 
         # 2.3 Model Selection
         mode_layout.addWidget(QLabel("🧠 模型:"))
@@ -270,7 +305,7 @@ class RAGRecallApp(QMainWindow):
             "X1-70B-thinking", 
             "X1-70B-fast"
         ])
-        self.combo_model.setFixedWidth(160)
+        self.combo_model.setFixedWidth(140)
         mode_layout.addWidget(self.combo_model)
         
         mode_layout.addStretch()
@@ -403,6 +438,14 @@ class RAGRecallApp(QMainWindow):
 
     # ================= UI 交互逻辑 =================
     
+    def on_doc_type_changed(self, text):
+        """动态显示流控组件"""
+        if text in ["书籍/教材", "长篇论文"]:
+            self.chunk_limit_widget.show()
+            self.log(f"📚 检测到书籍模式，已启用动态流控 (默认 25 chunks)")
+        else:
+            self.chunk_limit_widget.hide()
+
     def browse_db(self):
         path, _ = QFileDialog.getOpenFileName(self, "选择数据库", "", "SQLite DB (*.db);;All Files (*.*)")
         if path:
@@ -521,50 +564,84 @@ class RAGRecallApp(QMainWindow):
     # ================= 核心流程控制 =================
 
     def start_recall(self):
+        # 1. 基础校验
         db_path = self.db_path_edit.text().strip()
         json_path = self.json_path_edit.text().strip()
         query = self.query_input.toPlainText().strip()
-        
-        mode_id = self.mode_group.checkedId()
-        search_mode = "smart" 
-        if mode_id == 2: search_mode = "precise"
-        elif mode_id == 3: search_mode = "fuzzy"
-
-        summary_model = self.combo_model.currentText()
-        doc_type = self.combo_doc_type.currentText()
-        stopwords = self.get_current_stopwords()
-        
-        # 读取航司字典 (Step 1 数据)
-        airline_names = self.get_airline_list()
         
         if not db_path or not os.path.exists(db_path):
             QMessageBox.warning(self, "Error", "无效的数据库路径")
             return
         if not query:
             return
-        
-        self.cached_query = query
-        self.cached_results = []
-        self.cached_summary = ""
-        
-        # UI 状态更新
-        self.btn_search.setEnabled(False)
-        self.btn_stop.setEnabled(True) 
-        self.result_display.clear()
-        self.summary_display.clear() 
-        self.console_output.clear()
-        
-        mode_text = {"smart": "🔵 智能融合", "precise": "🟢 精准查表", "fuzzy": "🟡 模糊咨询"}[search_mode]
-        self.log(f"🚀 初始化任务... | 策略: {mode_text} | 模型: {summary_model}")
-        self.log(f"ℹ️ 文档类型: {doc_type} | 航司字典: {len(airline_names)} 个词 | Stopwords: {len(stopwords)} 个")
-        
-        # 实例化后端 Worker (传入 airline_names)
-        self.worker = RecallWorker(query, db_path, json_path, search_mode, summary_model, doc_type, stopwords, airline_names)
-        self.worker.log_signal.connect(self.log)
-        self.worker.result_signal.connect(self.display_results)
-        self.worker.summary_signal.connect(self.update_summary) 
-        self.worker.finish_signal.connect(self.on_finished)
-        self.worker.start()
+
+        # 2. 获取参数
+        try:
+            mode_id = self.mode_group.checkedId()
+            search_mode = "smart" 
+            if mode_id == 2: search_mode = "precise"
+            elif mode_id == 3: search_mode = "fuzzy"
+
+            summary_model = self.combo_model.currentText()
+            doc_type = self.combo_doc_type.currentText()
+            stopwords = self.get_current_stopwords()
+            airline_names = self.get_airline_list()
+            
+            # 获取 FAISS 开关状态
+            use_faiss = self.chk_use_faiss.isChecked()
+
+            # 3. 处理切块限制 (流控逻辑)
+            chunk_limit = 40 # 默认值
+            if self.chunk_limit_widget.isVisible():
+                # 从 "25 (平衡)" 这样的字符串中提取数字
+                raw_text = self.combo_chunk_limit.currentText()
+                try:
+                    chunk_limit = int(raw_text.split()[0])
+                except:
+                    chunk_limit = 25
+            
+            self.cached_query = query
+            self.cached_results = []
+            self.cached_summary = ""
+            
+            # UI 状态更新
+            self.btn_search.setEnabled(False)
+            self.btn_stop.setEnabled(True) 
+            self.result_display.clear()
+            self.summary_display.clear() 
+            self.console_output.clear()
+            
+            mode_text = {"smart": "🔵 智能融合", "precise": "🟢 精准查表", "fuzzy": "🟡 模糊咨询"}[search_mode]
+            self.log(f"🚀 初始化任务... | 策略: {mode_text} | 模型: {summary_model}")
+            self.log(f"ℹ️ 加速模式: {'FAISS' if use_faiss else 'Brute-Force JSON'}")
+            self.log(f"ℹ️ 文档类型: {doc_type} | Limit: {chunk_limit}")
+            self.log(f"ℹ️ 知识库: 航司词表 {len(airline_names)} | Stopwords {len(stopwords)}")
+            
+            # 实例化后端 Worker
+            self.worker = RecallWorker(
+                query_text=query, 
+                db_path=db_path, 
+                json_path=json_path, 
+                search_mode=search_mode, 
+                summary_model=summary_model, 
+                doc_type=doc_type, 
+                stopwords=stopwords, 
+                airline_names=airline_names,
+                chunk_limit=chunk_limit, # 传入流控参数
+                use_faiss=use_faiss      # 【NEW】传入 FAISS 开关
+            )
+            
+            self.worker.log_signal.connect(self.log)
+            self.worker.result_signal.connect(self.display_results)
+            self.worker.summary_signal.connect(self.update_summary) 
+            self.worker.finish_signal.connect(self.on_finished)
+            self.worker.start()
+
+        except Exception as e:
+            # 兜底：防止前端逻辑崩溃
+            QMessageBox.critical(self, "System Error", f"启动失败: {str(e)}")
+            self.btn_search.setEnabled(True)
+            self.btn_stop.setEnabled(False)
 
     def stop_recall(self):
         if self.worker and self.worker.isRunning():

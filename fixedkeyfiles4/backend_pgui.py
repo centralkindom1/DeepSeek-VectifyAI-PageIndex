@@ -1,4 +1,4 @@
-# backend_pgui.py （完全未修改，保持原样）
+# backend_pgui.py （已修改 Prompt 以支持跨语言检索）
 import sys
 import json
 import os
@@ -23,14 +23,14 @@ for k in ['HTTP_PROXY', 'HTTPS_PROXY', 'http_proxy', 'https_proxy']:
 
 # 2. API Configuration (Internal Network)
 API_KEY = "YOUR API KEY"
-BASE_URL = "https://WWW.DEEPSEEK.COM:18080/v1" 
+BASE_URL = "https://WWW.DEEPSEEK.COM.cn:18080/v1" 
 
-# ================= PROMPTS =================
+# ================= PROMPTS (MODIFIED FOR CROSS-LINGUAL RAG) =================
 SYSTEM_PROMPT = """你是一个高精度的元数据分析师。你的任务是分析给定的文档片段，并生成一段简短的、富含上下文的“语义导语”。
 
-【注意】
-你不需要重写原始数据，只需要生成“导语”。
-导语必须明确指出：这段内容属于哪个章节路径，包含什么类型的数据。"""
+【关键原则】
+1. **语言桥梁**：无论输入文档的原始语言是中文、英文还是其他语言，你的**输出分析（语义导语）必须始终使用简体中文**。这非常重要，用于跨语言检索。
+2. **内容定位**：导语必须明确指出这段内容属于哪个章节路径，包含什么类型的数据。"""
 
 USER_PROMPT_TEMPLATE = """请分析以下文档片段的元数据。
 
@@ -38,18 +38,23 @@ USER_PROMPT_TEMPLATE = """请分析以下文档片段的元数据。
 - 文档标题：{doc_title}
 - 章节路径：{path_str}
 - 数据片段长度：{length} 字符
-- 数据预览：
+- 数据预览（可能包含英文/中文）：
 {content_preview}
 
 【任务要求】
-1. 生成 `semantic_intro`：一段 50-100 字的描述，说明这段数据在文档中的位置（基于章节路径）以及它主要包含什么实体（如“包含从北京(PKX)出发的航班时刻表”）。
-2. **绝对不要** 列举具体数据（因为我会把原始数据拼接到后面），只需要描述数据的性质和范围。
-3. 输出为 JSON 格式。
+1. 生成 `semantic_intro`：
+   - 使用 **简体中文** 撰写。
+   - 这是一段 50-100 字的描述，说明这段数据在文档中的位置以及它主要包含什么实体。
+   - **如果是英文原文**，请翻译其核心主题（例如：原文是 "Flight Schedule from JFK"，导语应包含 "肯尼迪机场(JFK)出发的航班时刻表"）。
+2. 生成 `section_hint`：
+   - 使用 **简体中文** 提取 1-3 个关键词（如：航班时刻表 / 票价规则 / 维护手册）。
+3. **绝对不要** 列举具体数据（因为我会把原始数据拼接到后面），只需要描述数据的性质和范围。
+4. 输出为 JSON 格式。
 
 【JSON 结构】：
 {{
   "semantic_intro": "这是关于 [路径] 的详细数据表，包含...",
-  "section_hint": "航班时刻表 / 票价列表 / ..."
+  "section_hint": "关键词1 / 关键词2"
 }}
 """
 # ======================================================
@@ -256,5 +261,4 @@ def main():
         traceback.print_exc()
 
 if __name__ == "__main__":
-
     main()

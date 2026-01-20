@@ -1,0 +1,9 @@
+# 忽略所有缓存的模型权重文件
+.cache/
+**/pytorch_model.bin
+**/model.safetensors
+**/onnx/
+from sentence_transformers import SentenceTransformer
+
+# 推荐做法：直接写模型名
+model = SentenceTransformer('all-MiniLM-L6-v2')

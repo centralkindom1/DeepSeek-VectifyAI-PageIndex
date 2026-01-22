@@ -1,0 +1,2 @@
+C:\Users\Administrator.SK-20220809VSDF\.cache\torch\sentence_transformers\sentence-transformers_all-MiniLM-L6-v2
+O:\Models\bge-small-zh-v1.5

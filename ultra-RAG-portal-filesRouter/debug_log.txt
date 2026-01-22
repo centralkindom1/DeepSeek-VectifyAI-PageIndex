@@ -1,0 +1,7 @@
+[12:32:41] [DB] 数据库(V4)就绪，包含向量字段
+[12:32:48] [Thread] 总结线程启动
+[12:32:48] [Chat API] 请求模型: DeepSeek-V3
+[12:33:01] [Thread] 正在调用 Embedding 模型生成向量...
+[12:33:01] [Embedding API] 请求模型: bge-m3
+[12:33:02] [Embedding API] 成功获取向量，维度: 1024
+[12:33:02] [DB] 数据入库成功(含向量): aidishengtest.pdf_20260113_153900.json

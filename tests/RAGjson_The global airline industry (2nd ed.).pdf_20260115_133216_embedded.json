@@ -1,0 +1,89 @@
+[
+  {
+    "id": "fa9788950eb233817f0ff86e7e65fa57",
+    "embedding": [
+      -0.038340337574481964,
+      0.0002777158806566149,
+      
+    ],
+    "embedding_text": "这是关于文档《The global airline industry (2nd ed.).pdf》中 Preface / Abstract 章节的元数据片段，主要包含书籍标题的简短预览，用于标识文档的核心主题和范围。\n\n【原始数据内容】:\nTHE GLOBAL\nAIRLINE INDUSTRY",
+    "section_hint": "标题预览 / 摘要内容",
+    "metadata": {
+      "doc_title": "The global airline industry (2nd ed.).pdf",
+      "section_id": "0000",
+      "section_path": [
+        "Preface / Abstract"
+      ],
+      "depth": 1,
+      "original_length": 30,
+      "strategy": 0
+    },
+    "original_snippet": "\n\nTHE GLOBAL\nAIRLINE INDUSTRY\n"
+  },
+  {
+    "id": "ba9ec6b8d39aee463f2f8ced937d199d",
+    "embedding": [
+      -0.0170794315636158,
+     
+    ],
+    "embedding_text": "这段内容位于文档《The global airline industry (2nd ed.).pdf》的根章节路径 'THE GLOBAL AIRLINE INDUSTRY' 中，主要包含该系列丛书的出版目录列表，涉及航空航天领域的学术著作标题、作者和出版日期等元数据。\n\n【原始数据内容】:\nTHE GLOBAL\nAIRLINE INDUSTRY\nAerospaceSeriesList\nTheGlobalAirlineIndustry,SecondEdition Belobaba,OdoniandBarnhart July2015\nModelingtheEffectofDamageinCompositeStructures: Kassapoglou March2015\nSimplifiedApproaches\nIntroductiontoAircraftAeroelasticityandLoads,2ndEdition WrightandCooper December2014\nAircraftAerodynamicDesign:GeometryandOptimization SóbesterandForrester October2014\nTheoreticalandComputationalAerodynamics Sengupta September2014\nAerospacePropulsion Lee October2013\nAircraftFlightDynamicsandControl Durham August2013\nCivilAvionicsSystems,2ndEdition Moir,SeabridgeandJukes August2013\nModellingandManagingAirportPerformance Zografos,AndreattaandOdoni July2013\nAdvancedAircraftDesign:ConceptualDesign,Analysisand Torenbeek June2013\nOptimizationofSubsonicCivilAirplanes\nDesignandAnalysisofCompositeStructures:With Kassapoglou April2013\nApplicationstoAerospaceStructures,2ndEdition\nAircraftSystemsIntegrationofAir-LaunchedWeapons Rigby April2013\nDesignandDevelopmentofAircraftSystems,2ndEdition MoirandSeabridge November2012\nUnderstandingAerodynamics:ArguingfromtheRealPhysics McLean November2012\nAircraftDesign:ASystemsEngineeringApproach Sadraey October2012\nIntroductiontoUAVSystems4e FahlstromandGleason August2012\nTheoryofLift:IntroductoryComputationalAerodynamicswith McBain August2012\nMATLABandOctave\nSenseandAvoidinUAS:ResearchandApplications Angelov April2012\nMorphingAerospaceVehiclesandStructures Valasek April2012\nGasTurbinePropulsionSystems MacIsaacandLangton July2011\nBasicHelicopterAerodynamics,3rdEdition SeddonandNewman July2011\nAdvancedControlofAircraft,SpacecraftandRockets Tewari July2011\nCooperativePathPlanningofUnmannedAerialVehicles Tsourdosetal November2010\nPrinciplesofFlightforPilots Swatton October2010\nAirTravelandHealth:ASystemsPerspective Seabridgeetal September2010\nDesignandAnalysisofCompositeStructures:Withapplications Kassapoglou September2010\ntoaerospaceStructures\nUnmannedAircraftSystems:UAVSDesign,Developmentand Austin April2010\nDeployment\nIntroductiontoAntennaPlacement&Installations Macnamara April2010\nPrinciplesofFlightSimulation Allerton October2009\nAircraftFuelSystems Langtonetal May2009\nTheGlobalAirlineIndustry Belobaba April2009\nComputationalModellingandSimulationofAircraftandthe Diston April2009\nEnvironment:Volume1-PlatformKinematicsandSynthetic\nEnvironment\nHandbookofSpaceTechnology Ley,WittmannHallmann April2009\nAircraftPerformanceTheoryandPracticeforPilots Swatton August2008\nAircraftSystems,3rdEdition Moir&Seabridge March2008\nIntroductiontoAircraftAeroelasticityAndLoads Wright&Cooper December2007\nStabilityandControlofAircraftSystems Langton September2006\nMilitaryAvionicsSystems Moir&Seabridge February2006\nDesignandDevelopmentofAircraftSystems Moir&Seabridge June2004\nAircraftLoadingandStructuralLayout Howe May2004\nAircraftDisplaySystems Jukes December2003\nCivilAvionicsSystems Moir&Seabridge December2002",
+    "section_hint": "出版目录 / 书目列表",
+    "metadata": {
+      "doc_title": "The global airline industry (2nd ed.).pdf",
+      "section_id": "0001",
+      "section_path": [
+        "THE GLOBAL AIRLINE INDUSTRY"
+      ],
+      "depth": 1,
+      "original_length": 2877,
+      "strategy": 0
+    },
+    "original_snippet": "THE GLOBAL\nAIRLINE INDUSTRY\nAerospaceSeriesList\nTheGlobalAirlineIndustry,SecondEdition Belobaba,OdoniandBarnhart July2015\nModelingtheEffectofDamageinCompositeStructures: Kassapoglou March2015\nSimplifiedApproaches\nIntroductiontoAircraftAeroelasticityandLoads,2ndEdition WrightandCooper December2014\nAircraftAerodynamicDesign:GeometryandOptimization SóbesterandForrester October2014\nTheoreticalandComputationalAerodynamics Sengupta September2014\nAerospacePropulsion Lee October2013\nAircraftFlightDynami"
+  },
+  {
+    "id": "ec813493b680cbae686fd712be607330",
+    "embedding": [
+      -0.014890356920659542,
+      
+      0.03010968118906021,
+      0.028276164084672928,
+     
+    ],
+    "embedding_text": "这是关于 AerospaceSeriesList 章节的元数据片段，主要包含航空航天领域系列出版物的列表，涉及书籍标题、作者和出版日期等书目信息。\n\n【原始数据内容】:\nAerospaceSeriesList\nTheGlobalAirlineIndustry,SecondEdition Belobaba,OdoniandBarnhart July2015\nModelingtheEffectofDamageinCompositeStructures: Kassapoglou March2015\nSimplifiedApproaches\nIntroductiontoAircraftAeroelasticityandLoads,2ndEdition WrightandCooper December2014\nAircraftAerodynamicDesign:GeometryandOptimization SóbesterandForrester October2014\nTheoreticalandComputationalAerodynamics Sengupta September2014\nAerospacePropulsion Lee October2013\nAircraftFlightDynamicsandControl Durham August2013\nCivilAvionicsSystems,2ndEdition Moir,SeabridgeandJukes August2013\nModellingandManagingAirportPerformance Zografos,AndreattaandOdoni July2013\nAdvancedAircraftDesign:ConceptualDesign,Analysisand Torenbeek June2013\nOptimizationofSubsonicCivilAirplanes\nDesignandAnalysisofCompositeStructures:With Kassapoglou April2013\nApplicationstoAerospaceStructures,2ndEdition\nAircraftSystemsIntegrationofAir-LaunchedWeapons Rigby April2013\nDesignandDevelopmentofAircraftSystems,2ndEdition MoirandSeabridge November2012\nUnderstandingAerodynamics:ArguingfromtheRealPhysics McLean November2012\nAircraftDesign:ASystemsEngineeringApproach Sadraey October2012\nIntroductiontoUAVSystems4e FahlstromandGleason August2012\nTheoryofLift:IntroductoryComputationalAerodynamicswith McBain August2012\nMATLABandOctave\nSenseandAvoidinUAS:ResearchandApplications Angelov April2012\nMorphingAerospaceVehiclesandStructures Valasek April2012\nGasTurbinePropulsionSystems MacIsaacandLangton July2011\nBasicHelicopterAerodynamics,3rdEdition SeddonandNewman July2011\nAdvancedControlofAircraft,SpacecraftandRockets Tewari July2011\nCooperativePathPlanningofUnmannedAerialVehicles Tsourdosetal November2010\nPrinciplesofFlightforPilots Swatton October2010\nAirTravelandHealth:ASystemsPerspective Seabridgeetal September2010\nDesignandAnalysisofCompositeStructures:Withapplications Kassapoglou September2010\ntoaerospaceStructures\nUnmannedAircraftSystems:UAVSDesign,Developmentand Austin April2010\nDeployment\nIntroductiontoAntennaPlacement&Installations Macnamara April2010\nPrinciplesofFlightSimulation Allerton October2009\nAircraftFuelSystems Langtonetal May2009\nTheGlobalAirlineIndustry Belobaba April2009\nComputationalModellingandSimulationofAircraftandthe Diston April2009\nEnvironment:Volume1-PlatformKinematicsandSynthetic\nEnvironment\nHandbookofSpaceTechnology Ley,WittmannHallmann April2009\nAircraftPerformanceTheoryandPracticeforPilots Swatton August2008\nAircraftSystems,3rdEdition Moir&Seabridge March2008\nIntroductiontoAircraftAeroelasticityAndLoads Wright&Cooper December2007\nStabilityandControlofAircraftSystems Langton September2006\nMilitaryAvionicsSystems Moir&Seabridge February2006\nDesignandDevelopmentofAircraftSystems Moir&Seabridge June2004\nAircraftLoadingandStructuralLayout Howe May2004\nAircraftDisplaySystems Jukes December2003\nCivilAvionicsSystems Moir&Seabridge December2002\nTHE GLOBAL\nAIRLINE INDUSTRY\nSecond Edition\nEditedby\nPeterBelobaba\nDepartmentofAeronautics&Astronautics,MIT,USA\nAmedeoOdoni\nDepartmentsofAeronautics&AstronauticsandCivil&EnvironmentalEngineering,\nMIT,USA\nCynthiaBarnhart\nDepartmentofCivil&EnvironmentalEngineering,MIT,USA",
+    "section_hint": "书目列表",
+    "metadata": {
+      "doc_title": "The global airline industry (2nd ed.).pdf",
+      "section_id": "0002",
+      "section_path": [
+        "AerospaceSeriesList"
+      ],
+      "depth": 1,
+      "original_length": 3119,
+      "strategy": 0
+    },
+    "original_snippet": "AerospaceSeriesList\nTheGlobalAirlineIndustry,SecondEdition Belobaba,OdoniandBarnhart July2015\nModelingtheEffectofDamageinCompositeStructures: Kassapoglou March2015\nSimplifiedApproaches\nIntroductiontoAircraftAeroelasticityandLoads,2ndEdition WrightandCooper December2014\nAircraftAerodynamicDesign:GeometryandOptimization SóbesterandForrester October2014\nTheoreticalandComputationalAerodynamics Sengupta September2014\nAerospacePropulsion Lee October2013\nAircraftFlightDynamicsandControl Durham August20"
+  },
+  {
+    "id": "50011c97523f6590888618f5831158dd",
+    "embedding": [
+      0.009924513287842274,
+     
+      -0.07724380493164062,
+      0.02650345489382744
+    ],
+    "embedding_text": "这段内容位于文档《The global airline industry (2nd ed.).pdf》的标题页章节，主要包含书籍的元数据信息，如书名、版本、编辑者姓名及其所属机构、出版年份、版权声明以及出版商联系信息。\n\n【原始数据内容】:\nTHE GLOBAL\nAIRLINE INDUSTRY\nSecond Edition\nEditedby\nPeterBelobaba\nDepartmentofAeronautics&Astronautics,MIT,USA\nAmedeoOdoni\nDepartmentsofAeronautics&AstronauticsandCivil&EnvironmentalEngineering,\nMIT,USA\nCynthiaBarnhart\nDepartmentofCivil&EnvironmentalEngineering,MIT,USA\nThiseditionfirstpublished2016\n2016,JohnWiley&Sons,Ltd\nFirstEditionpublishedin2009\nRegisteredoffice\nJohnWiley&SonsLtd,TheAtrium,SouthernGate,Chichester,WestSussex,PO198SQ,UnitedKingdom\nFordetailsofourglobaleditorialoffices,forcustomerservicesandforinformationabouthowtoapplyforpermissionto\nreusethecopyrightmaterialinthisbookpleaseseeourwebsiteatwww.wiley.com.\nTherightoftheauthortobeidentifiedastheauthorofthisworkhasbeenassertedinaccordancewiththeCopyright,Designs\nandPatentsAct1988.\nAllrightsreserved.Nopartofthispublicationmaybereproduced,storedinaretrievalsystem,ortransmitted,inanyformor\nbyanymeans,electronic,mechanical,photocopying,recordingorotherwise,exceptaspermittedbytheUKCopyright,\nDesignsandPatentsAct1988,withoutthepriorpermissionofthepublisher.\nWileyalsopublishesitsbooksinavarietyofelectronicformats.Somecontentthatappearsinprintmaynotbeavailablein\nelectronicbooks.\nDesignationsusedbycompaniestodistinguishtheirproductsareoftenclaimedastrademarks.Allbrandnamesandproduct\nnamesusedinthisbookaretradenames,servicemarks,trademarksorregisteredtrademarksoftheirrespectiveowners.The\npublisherisnotassociatedwithanyproductorvendormentionedinthisbook\nLimitofLiability/DisclaimerofWarranty:Whilethepublisherandauthorhaveusedtheirbesteffortsinpreparingthisbook,\ntheymakenorepresentationsorwarrantieswithrespecttotheaccuracyorcompletenessofthecontentsofthisbookand\nspecificallydisclaimanyimpliedwarrantiesofmerchantabilityorfitnessforaparticularpurpose.Itissoldonthe\nunderstandingthatthepublisherisnotengagedinrenderingprofessionalservicesandneitherthepublishernortheauthor\nshallbeliablefordamagesarisingherefrom.Ifprofessionaladviceorotherexpertassistanceisrequired,theservicesofa\ncompetentprofessionalshouldbesought.\nLibraryofCongressCataloging-in-PublicationDataappliedfor.\nAcataloguerecordforthisbookisavailablefromtheBritishLibrary.\nISBN:9781118881170\nSetin10/12ptTimesLTStd-RomanbyThomsonDigital,Noida,India\n1 2016",
+    "section_hint": "书籍元数据 / 版权信息",
+    "metadata": {
+      "doc_title": "The global airline industry (2nd ed.).pdf",
+      "section_id": "0003",
+      "section_path": [
+        "Title Page"
+      ],
+      "depth": 1,
+      "original_length": 2198,
+      "strategy": 0
+    },
+    "original_snippet": "THE GLOBAL\nAIRLINE INDUSTRY\nSecond Edition\nEditedby\nPeterBelobaba\nDepartmentofAeronautics&Astronautics,MIT,USA\nAmedeoOdoni\nDepartmentsofAeronautics&AstronauticsandCivil&EnvironmentalEngineering,\nMIT,USA\nCynthiaBarnhart\nDepartmentofCivil&EnvironmentalEngineering,MIT,USA\nThiseditionfirstpublished2016\n2016,JohnWiley&Sons,Ltd\nFirstEditionpublishedin2009\nRegisteredoffice\nJohnWiley&SonsLtd,TheAtrium,SouthernGate,Chichester,WestSussex,PO198SQ,UnitedKingdom\nFordetailsofourglobaleditorialoffices,forcust"
+  }
+
+]

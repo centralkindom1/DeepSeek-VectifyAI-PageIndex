@@ -243,11 +243,16 @@ class RAGRecallApp(QMainWindow):
         self.sys_monitor.cpu_signal.connect(self.update_cpu_bar)
         self.sys_monitor.start()
         
-        # 【修改点 1】: 默认自动启动加载 BGE (Win7 优化：延迟 1s 启动，防止 GUI 绘制竞争)
-        self.log("🕒 正在准备后台加载默认模型 (BGE-Small)...")
+        # 【修改点 1】: 设置默认 UI 状态 (仅选中单选钮，不触发加载)
         # 强制设置默认UI状态为 BGE
         self.radio_bge.setChecked(True)
-        self.trigger_model_load("bge")
+        
+        # 根据复选框状态决定是否启动加载
+        if self.chk_local_model.isChecked():
+            self.log("🕒 检测到模型功能已启用，正在后台加载默认模型 (BGE-Small)...")
+            self.trigger_model_load("bge")
+        else:
+            self.log("🕒 本地模型过滤已关闭，暂不加载模型 (待命状态)。")
         
     def ensure_airline_dict(self):
         if not os.path.exists(AIRLINE_DICT_FILE):
@@ -366,7 +371,7 @@ class RAGRecallApp(QMainWindow):
         
         # 总开关
         self.chk_local_model = QCheckBox("🧠 启用本地小模型过滤")
-        self.chk_local_model.setChecked(True)
+        self.chk_local_model.setChecked(False)
         self.chk_local_model.setStyleSheet("color: #ffa502; font-weight: bold;")
         self.chk_local_model.setToolTip("使用本地 Embedding 模型进行粗排")
         self.chk_local_model.stateChanged.connect(self.toggle_local_model_ui)

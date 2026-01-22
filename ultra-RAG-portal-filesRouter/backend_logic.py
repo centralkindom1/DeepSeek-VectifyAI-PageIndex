@@ -15,10 +15,10 @@ urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
 # =================配置区域=================
 # Chat Completions API
-API_URL = "https://aiplus.airchina.com.cn:18080/v1/chat/completions"
+API_URL = "https://www.qwenplus.com:18080/v1/chat/completions"
 # Embeddings API
-EMBEDDING_URL = "https://aiplus.airchina.com.cn:18080/v1/embeddings"
-API_KEY = "sk-fXM4W0CdcKnNp3NVDfF85f2b90284b11AfDdF9F5627f627b"
+EMBEDDING_URL = "https://www.siconflow.cn:18080/v1/embeddings"
+API_KEY = "your api key"
 
 # 数据库名称升级为 v4
 DB_NAME = "doc_summary_v4.db"
@@ -265,4 +265,5 @@ class JsonProcessor:
         except Exception:
             err = traceback.format_exc()
             log_to_file(f"[IO Error] 解析 JSON 失败:\n{err}")
+
             return None, f"解析失败: {err}"

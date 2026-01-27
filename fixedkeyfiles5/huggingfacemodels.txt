@@ -6,4 +6,7 @@
 from sentence_transformers import SentenceTransformer
 
 # 推荐做法：直接写模型名
+
 model = SentenceTransformer('all-MiniLM-L6-v2')
+
+your can download the local models form www.modelscope.com

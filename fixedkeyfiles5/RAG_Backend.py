@@ -29,15 +29,15 @@ os.environ['CURL_CA_BUNDLE'] = ''
 API_KEY = "YOUR API KEY"
 
 # 1. Embedding API
-EMBEDDING_API_URL = "https://WWW.BGE.COM.cn:18080/v1/embeddings" 
+EMBEDDING_API_URL = "https://WWW.SICONFLOW.COM:18080/v1/embeddings" 
 EMBEDDING_MODEL_NAME = "bge-m3"
 
 # 2. Rerank API
-RERANK_API_URL = "https://WWW.BGERERANK.COM.cn:18080/v1/rerank" 
+RERANK_API_URL = "https://WWW.SICONFLOW.COM:18080/v1/rerank" 
 RERANK_MODEL_NAME = "bge-reranker-v2-m3"
 
 # 3. DeepSeek/LLM API
-DEEPSEEK_API_URL = "https://WWW.DEEPSEEK.COM.cn:18080/v1/chat/completions"
+DEEPSEEK_API_URL = "https://WWW.DEEPSEEK.COM:18080/v1/chat/completions"
 DEEPSEEK_V3_MODEL_NAME = "DeepSeek-V3"
 
 # 仅用于日志显示的名称
@@ -626,6 +626,31 @@ Content:
             fused_scores[doc_id] += json_boost * (1.0 / (k + rank + 1))
             if "JSON" not in item_map[doc_id].get('source', ''):
                 item_map[doc_id]['source'] = "MIXED (Vec+JSON)"
+
+        # 【新增：航司字典强制置顶逻辑】
+        # 如果 Query 中包含字典里的航司名，直接给对应文档加巨大分数 (如 +10.0)
+        target_airlines = []
+        if self.airline_names:
+            for name in self.airline_names:
+                if name.lower() in self.original_query.lower():
+                    target_airlines.append(name)
+        
+        if target_airlines:
+            self.log(f"🔥 [Airline Boost] 检测到查询包含航司关键词 {target_airlines}，正在执行强制置顶...")
+            boost_count = 0
+            for doc_id, score in fused_scores.items():
+                item = item_map[doc_id]
+                content_check = item.get('content', '')
+                # 只要内容中包含任一目标航司名
+                for air in target_airlines:
+                    if air in content_check:
+                        fused_scores[doc_id] += 10.0 # 强制加分，使其排到最前
+                        old_debug = str(item.get('debug_score', ''))
+                        item['debug_score'] = f"{old_debug} [AirBoost:{air}]"
+                        boost_count += 1
+                        break
+            if boost_count > 0:
+                self.log(f"   ✅ 已将 {boost_count} 条包含目标航司的内容强制置顶。")
 
         # 3. Sort
         sorted_doc_ids = sorted(fused_scores.keys(), key=lambda x: fused_scores[x], reverse=True)

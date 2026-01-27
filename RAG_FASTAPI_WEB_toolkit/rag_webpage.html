@@ -1,0 +1,975 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <title>RAG 智能检索系统 (DeepSeek/Qwen)</title>
+    <script src="https://cdn.staticfile.org/marked/4.3.0/marked.min.js"></script>
+    <style>
+        /* ================= 全局样式 ================= */
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background: #f4f7f6;
+            margin: 0;
+            display: flex;
+            height: 100vh;
+            overflow: hidden; 
+        }
+
+        /* ================= 左侧侧边栏 ================= */
+        .sidebar {
+            width: 320px;
+            background: #fff;
+            border-right: 1px solid #ddd;
+            display: flex;
+            flex-direction: column;
+            padding: 20px;
+            box-shadow: 2px 0 5px rgba(0,0,0,0.05);
+            overflow-y: auto;
+            flex-shrink: 0;
+            z-index: 10;
+        }
+
+        .sidebar-section {
+            background: #f8f9fa;
+            border: 1px solid #e9ecef;
+            border-radius: 8px;
+            padding: 15px;
+            margin-bottom: 15px;
+        }
+
+        .sidebar h2 {
+            font-size: 18px;
+            color: #333;
+            margin: 0 0 15px 0;
+            text-align: center;
+            border-bottom: 2px solid #007bff;
+            padding-bottom: 10px;
+        }
+
+        .section-header {
+            font-size: 14px;
+            font-weight: bold;
+            color: #007bff;
+            margin-bottom: 10px;
+            text-transform: uppercase;
+            letter-spacing: 1px;
+        }
+
+        .input-group { margin-bottom: 10px; }
+        .input-label { font-size: 12px; font-weight: 600; color: #555; margin-bottom: 4px; display: block; }
+        
+        select, textarea, input[type="text"], input[type="number"] {
+            width: 100%;
+            padding: 6px;
+            border: 1px solid #ccc;
+            border-radius: 4px;
+            box-sizing: border-box;
+            font-size: 13px;
+        }
+        
+        /* Checkbox Row */
+        .checkbox-row {
+            display: flex;
+            align-items: center;
+            margin-bottom: 5px;
+        }
+        .checkbox-row input { margin-right: 8px; }
+        .checkbox-row label { font-size: 13px; color: #333; cursor: pointer; }
+
+        .btn-primary {
+            background: #007bff; color: white; border: none; padding: 10px;
+            border-radius: 4px; cursor: pointer; font-weight: bold;
+            transition: background 0.3s;
+        }
+        .btn-primary:hover { background: #0056b3; }
+        .btn-primary:disabled { background: #ccc; cursor: not-allowed; }
+
+        .btn-load {
+            background: #28a745; color: white; border: none; padding: 8px;
+            border-radius: 4px; cursor: pointer; width: 100%; font-size: 13px; margin-bottom: 4px;
+        }
+        .btn-load:hover { opacity: 0.9; }
+
+        /* 特殊按钮颜色 */
+        .btn-add { background: #17a2b8; }
+        .btn-del { background: #dc3545; }
+        .btn-list { background: #6c757d; }
+        .btn-stop { background: #dc3545; }
+
+        #configStatus, #modelStatus, #dictStatus { 
+            font-size: 12px; color: #666; margin-top: 5px; text-align: center; word-break: break-all;
+        }
+
+        /* ================= 右侧主区域 ================= */
+        .main-area {
+            flex: 1; display: flex; flex-direction: column; height: 100vh; position: relative; min-width: 0;
+            overflow: hidden; 
+        }
+
+        #chatContainer {
+            flex: 1; 
+            padding: 20px 40px; 
+            overflow-y: auto; 
+            background: #fff;
+            scroll-behavior: auto; 
+        }
+
+        /* WebKit 浏览器滚动条样式 */
+        #chatContainer::-webkit-scrollbar {
+            width: 12px;
+        }
+        #chatContainer::-webkit-scrollbar-track {
+            background: #f0f2f5; 
+            border-radius: 6px;
+        }
+        #chatContainer::-webkit-scrollbar-thumb {
+            background-color: #c1c9d2;
+            border-radius: 6px;
+            border: 3px solid #f0f2f5;
+        }
+        #chatContainer::-webkit-scrollbar-thumb:hover {
+            background-color: #a0aab5;
+        }
+
+        .answer-box { max-width: 900px; margin: 0 auto; }
+
+        /* === 新增：聊天区顶部的系统状态条 (System HUD) === */
+        .status-hud {
+            background: #f8f9fa;
+            border: 1px solid #e9ecef;
+            border-radius: 6px;
+            padding: 10px 15px;
+            margin-bottom: 15px;
+            font-family: 'Consolas', 'Monaco', monospace;
+            font-size: 12px;
+            color: #666;
+            display: none; /* 默认隐藏 */
+            border-left: 4px solid #17a2b8; 
+            box-shadow: 0 2px 5px rgba(0,0,0,0.03);
+            animation: fadeIn 0.3s ease;
+        }
+
+        .status-line {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+
+        .status-spinner {
+            width: 12px;
+            height: 12px;
+            border: 2px solid #ccc;
+            border-top-color: #007bff;
+            border-radius: 50%;
+            animation: spin 1s linear infinite;
+        }
+
+        .status-text {
+            flex: 1;
+            white-space: nowrap;
+            overflow: hidden;
+            text-overflow: ellipsis;
+        }
+
+        @keyframes spin { to { transform: rotate(360deg); } }
+        @keyframes fadeIn { from { opacity: 0; transform: translateY(-5px); } to { opacity: 1; transform: translateY(0); } }
+
+        /* 原有回答区域样式 */
+        .reasoning-box {
+            background: #f4f6f8; border-left: 4px solid #b0b8c1;
+            padding: 15px; margin-bottom: 20px; font-size: 0.9em;
+            color: #5f6368; display: none; border-radius: 4px;
+            line-height: 1.6; font-family: 'Consolas', monospace; white-space: pre-wrap;
+        }
+        
+        .final-answer { line-height: 1.6; color: #2c3e50; font-size: 16px; min-height: 50px; }
+        .final-answer p { margin-bottom: 1em; }
+        .final-answer code { background: #f1f1f1; padding: 2px 5px; border-radius: 3px; font-family: monospace; }
+        .final-answer pre { background: #2d2d2d; color: #ccc; padding: 15px; border-radius: 5px; overflow-x: auto; }
+
+        /* 打字光标样式 */
+        .typing-cursor::after {
+            content: '▋'; 
+            display: inline-block; 
+            animation: blink 1s step-end infinite; 
+            color: #007bff; 
+            margin-left: 2px;
+            font-size: 14px;
+            vertical-align: middle;
+        }
+        @keyframes blink { 50% { opacity: 0; } }
+        
+        .cursor-hidden::after { display: none; }
+
+        /* ================= 底部面板 ================= */
+        #dragHandle {
+            height: 8px; background: #e9ecef; cursor: row-resize;
+            border-top: 1px solid #ddd; border-bottom: 1px solid #ddd;
+            flex-shrink: 0; display: flex; justify-content: center; align-items: center;
+        }
+        #dragHandle::after { content: "•••"; color: #888; font-size: 12px; margin-top: -3px; }
+
+        #bottomContainer {
+            height: 35%; display: flex; border-top: 1px solid #eee; background: #fcfcfc;
+        }
+        #statusPanel { flex: 2; border-right: 1px solid #eee; display: flex; flex-direction: column; min-width: 200px; }
+        #sourcesPanel { flex: 3; display: flex; flex-direction: column; min-width: 300px; }
+
+        .panel-header {
+            padding: 8px 15px; background: #f1f3f5; border-bottom: 1px solid #e9ecef;
+            font-weight: bold; color: #495057; font-size: 13px; display: flex; justify-content: space-between;
+        }
+        .panel-content { padding: 10px; overflow-y: auto; flex: 1; font-size: 12px; }
+
+        #logContent { font-family: Consolas, monospace; white-space: pre-wrap; color: #333; }
+        .log-entry { margin-bottom: 3px; border-bottom: 1px dotted #eee; }
+        .log-time { color: #888; margin-right: 5px; }
+        .log-info { color: #28a745; }
+
+        .source-card {
+            background: white; border: 1px solid #e0e0e0; border-radius: 5px;
+            padding: 8px; margin-bottom: 6px; box-shadow: 0 1px 2px rgba(0,0,0,0.05);
+        }
+        .source-path { font-weight: bold; color: #007bff; display: block; margin-bottom: 4px; }
+        .source-meta { font-size: 11px; color: #666; display: flex; justify-content: space-between; }
+        .source-text { font-size: 11px; color: #555; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; margin-top: 4px;}
+
+        /* ================= 路由建议确认弹窗样式  ================= */
+        .routing-popover {
+            position: absolute;
+            bottom: 120px; 
+            left: 20px;
+            width: 300px;
+            background: #fff;
+            border: 1px solid #17a2b8;
+            box-shadow: 0 4px 20px rgba(0,0,0,0.15);
+            border-radius: 8px;
+            padding: 15px;
+            z-index: 9999;
+            display: none; 
+            animation: slideUp 0.3s ease-out;
+        }
+        .routing-popover::before {
+            content: ''; position: absolute; bottom: -10px; left: 20px;
+            border-width: 10px 10px 0; border-style: solid;
+            border-color: #fff transparent transparent transparent;
+        }
+        .routing-popover::after {
+            content: ''; position: absolute; bottom: -11px; left: 20px;
+            border-width: 10px 10px 0; border-style: solid;
+            border-color: #17a2b8 transparent transparent transparent; z-index: -1;
+        }
+        @keyframes slideUp { from { transform: translateY(10px); opacity: 0; } to { transform: translateY(0); opacity: 1; } }
+        
+        .rp-title { font-weight: bold; color: #17a2b8; margin-bottom: 8px; display: flex; align-items: center; gap: 5px; }
+        .rp-content { font-size: 13px; color: #555; margin-bottom: 15px; line-height: 1.4; }
+        .rp-buttons { display: flex; gap: 10px; justify-content: flex-end; }
+        .rp-btn { border: none; padding: 6px 12px; border-radius: 4px; font-size: 12px; cursor: pointer; }
+        .rp-btn-confirm { background: #28a745; color: white; }
+        .rp-btn-confirm:hover { background: #218838; }
+        .rp-btn-stop { background: #6c757d; color: white; }
+        .rp-btn-stop:hover { background: #5a6268; }
+    </style>
+</head>
+<body>
+
+    <div class="sidebar">
+        <h2>RAG 系统控制台</h2>
+        
+        <div class="sidebar-section">
+            <div class="section-header">📂 知识库配置</div>
+            <div class="input-group">
+                <label class="input-label">向量库 (.db)</label>
+                <select id="dbSelect"><option>加载中...</option></select>
+            </div>
+            <div class="input-group">
+                <label class="input-label">索引 (.json)</label>
+                <select id="jsonSelect"><option>加载中...</option></select>
+            </div>
+            <button class="btn-load" onclick="updateConfig()">📥 挂载知识库</button>
+            <div id="configStatus">未加载</div>
+        </div>
+
+        <div class="sidebar-section">
+            <div class="section-header">🧠 本地模型管理</div>
+            <div class="input-group">
+                <label class="input-label">选择本地模型</label>
+                <select id="localModelSelect">
+                    <option value="None">None (不使用)</option>
+                    <option value="BGE">BGE (Small-Zh)</option>
+                    <option value="MiniLM">MiniLM (L6-v2)</option>
+                </select>
+            </div>
+            <button class="btn-load" onclick="switchLocalModel()">🔄 切换/卸载模型</button>
+            <div id="modelStatus">Current: None</div>
+        </div>
+
+        <div class="sidebar-section">
+            <div class="section-header">📖 航司字典管理</div>
+            <div class="input-group">
+                <input type="text" id="dictInput" placeholder="输入航司名称...">
+            </div>
+            <div style="display: flex; gap: 5px; margin-bottom: 5px;">
+                <button class="btn-load btn-add" style="flex:1" onclick="manageDict('add')">➕ 添加</button>
+                <button class="btn-load btn-del" style="flex:1" onclick="manageDict('delete')">❌ 删除</button>
+            </div>
+            <button class="btn-load btn-list" onclick="manageDict('list')">📋 刷新列表</button>
+            <div id="dictStatus">数量: 0</div>
+        </div>
+
+        <div class="sidebar-section">
+            <div class="section-header">⚙️ 检索参数</div>
+            <div class="input-group">
+                <label class="input-label">模型 (Model)</label>
+                <select id="modelSelect">
+                    <option value="DeepSeek-R1">DeepSeek R1</option>
+                    <option value="DeepSeek-V3">DeepSeek V3</option>
+                </select>
+            </div>
+            <div class="input-group">
+                <label class="input-label">策略 (Mode)</label>
+                <select id="modeSelect">
+                    <option value="smart">智能混合 (Smart)</option>
+                    <option value="precise">精准匹配 (Precise)</option>
+                    <option value="fuzzy">模糊检索 (Fuzzy)</option>
+                </select>
+            </div>
+            <div class="input-group">
+                <label class="input-label">文档类型偏好</label>
+                <select id="docTypeSelect">
+                    <option value="不指定类型">不指定类型</option>
+                    <option value="书籍/教材">书籍/教材</option>
+                    <option value="规章制度">规章制度</option>
+                    <option value="技术文档">技术文档</option>
+                </select>
+            </div>
+            
+            <div class="checkbox-row">
+                <input type="checkbox" id="chkLocal">
+                <label for="chkLocal">启用本地小模型过滤</label>
+            </div>
+            <div class="checkbox-row">
+                <input type="checkbox" id="chkRouting">
+                <label for="chkRouting">启用路由分析建议</label>
+            </div>
+
+            <div style="display: flex; gap: 10px; margin-top: 8px;">
+                <div class="input-group" style="flex:1">
+                    <label class="input-label">Vec K</label>
+                    <input type="number" id="vecK" value="10" min="1" max="50">
+                </div>
+                <div class="input-group" style="flex:1">
+                    <label class="input-label">Json K</label>
+                    <input type="number" id="jsonK" value="10" min="1" max="50">
+                </div>
+            </div>
+        </div>
+
+        <div class="input-group">
+            <label class="input-label">💬 问题输入</label>
+            <textarea id="queryInput" rows="4" placeholder="在此输入您的问题..."></textarea>
+        </div>
+
+        <div style="display: flex; gap: 10px;">
+            <button id="askBtn" class="btn-primary" style="flex: 2" onclick="askRAG()">🚀 开始问答</button>
+            <button id="stopBtn" class="btn-primary btn-stop" style="flex: 1" onclick="stopSearch()" disabled>🛑 停止</button>
+        </div>
+    </div>
+
+    <div class="main-area" id="mainArea">
+        <div id="chatContainer">
+            <div class="answer-box">
+                <div id="statusHud" class="status-hud">
+                    <div class="status-line">
+                        <div class="status-spinner"></div>
+                        <div id="statusText" class="status-text">系统就绪</div>
+                    </div>
+                </div>
+
+                <div id="reasoningContent" class="reasoning-box">
+                    <div style="font-weight:bold; margin-bottom:5px;">🤔 深度思考</div>
+                    <span id="reasoningText" class="typing-cursor"></span>
+                </div>
+                
+                <div id="finalAnswerContainer" class="final-answer">
+                     <p id="placeholderText" style="color:#aaa; text-align:center; margin-top:50px;">请挂载知识库后输入问题</p>
+                    <div id="finalAnswerContent" class="cursor-hidden typing-cursor"></div>
+                </div>
+            </div>
+        </div>
+
+        <div id="routingPopover" class="routing-popover">
+            <div class="rp-title">💡 智能路由建议</div>
+            <div id="routingMsg" class="rp-content"></div>
+            <div class="rp-buttons">
+                <button id="btnRouteSwitch" class="rp-btn rp-btn-stop">停止并切换</button>
+                <button id="btnRouteCont" class="rp-btn rp-btn-confirm">忽略并继续</button>
+            </div>
+        </div>
+
+        <div id="dragHandle"></div>
+
+        <div id="bottomContainer">
+            <div id="statusPanel">
+                <div class="panel-header"><span>📍 实时日志 (Log Stream)</span></div>
+                <div id="logContent" class="panel-content"></div>
+            </div>
+
+            <div id="sourcesPanel">
+                <div class="panel-header">
+                    <span>📚 召回数据</span>
+                    <span id="sourceCount">0</span>
+                </div>
+                <div id="sourcesList" class="panel-content"></div>
+            </div>
+        </div>
+    </div>
+
+<script>
+    // ================== 日志工具 ==================
+    function logToUI(message) {
+        const div = document.getElementById('logContent');
+        const time = new Date().toLocaleTimeString();
+        div.innerHTML += `<div class="log-entry"><span class="log-time">[${time}]</span>${message}</div>`;
+        div.scrollTop = div.scrollHeight;
+    }
+
+    // ================== Typewriter Controller (状态栏增强版) ==================
+    class TypewriterController {
+        constructor() {
+            this.reasoningQueue = []; 
+            this.answerQueue = [];    
+            this.fullReasoning = "";  
+            this.fullAnswer = "";     
+            this.timer = null;
+            this.isRendering = false;
+            
+            // DOM Elements
+            this.reasoningEl = document.getElementById('reasoningText');
+            this.answerEl = document.getElementById('finalAnswerContent');
+            this.chatContainer = document.getElementById('chatContainer');
+            // 新增 DOM
+            this.statusHud = document.getElementById('statusHud');
+            this.statusText = document.getElementById('statusText');
+
+            // 状态标记
+            this.hasReasoningStarted = false;
+            this.hasAnswerStarted = false;
+            this.networkFinished = false; 
+
+            // 倒计时器
+            this.countdownTimer = null;
+        }
+
+        reset() {
+            this.stop();
+            this.clearCountdown(); // 重置前清除旧的
+
+            this.reasoningQueue = [];
+            this.answerQueue = [];
+            this.fullReasoning = "";
+            this.fullAnswer = "";
+            this.hasReasoningStarted = false;
+            this.hasAnswerStarted = false;
+            this.networkFinished = false;
+            
+            // UI Reset
+            document.getElementById('reasoningContent').style.display = 'none';
+            this.reasoningEl.innerText = "";
+            this.reasoningEl.classList.add('typing-cursor'); 
+            
+            document.getElementById('placeholderText').style.display = 'none';
+            this.answerEl.innerHTML = "";
+            this.answerEl.classList.add('cursor-hidden');   
+            this.answerEl.classList.add('typing-cursor');   
+
+            // === 重置时显示状态栏并启动倒计时 ===
+            this.statusHud.style.display = 'block';
+            this.startInitialCountdown();
+        }
+
+        // === 启动初始化倒计时 ===
+        startInitialCountdown() {
+            let seconds = 60;
+            const updateText = () => {
+                this.statusText.innerText = `🚀 系统初始化... (${seconds}s)`;
+            };
+            
+            updateText(); // 立即显示
+            
+            this.countdownTimer = setInterval(() => {
+                seconds--;
+                if(seconds < 0) {
+                    this.clearCountdown();
+                    return;
+                }
+                updateText();
+            }, 1000);
+        }
+
+        // === 清除倒计时 ===
+        clearCountdown() {
+            if(this.countdownTimer) {
+                clearInterval(this.countdownTimer);
+                this.countdownTimer = null;
+            }
+        }
+
+        // === 更新状态栏文字 ===
+        updateStatus(text) {
+            // 一旦有新的状态更新（通常是后端返回了Log或数据），立刻清除假的倒计时
+            this.clearCountdown();
+
+            // 只有当正文还没开始生成时，才更新状态栏
+            if (!this.hasReasoningStarted && !this.hasAnswerStarted) {
+                const cleanText = text.replace(/^\[.*?\]\s*/, ''); 
+                this.statusText.innerText = cleanText;
+                this.statusHud.style.display = 'block'; 
+            }
+        }
+
+        // === 隐藏状态栏 ===
+        hideStatus() {
+            this.clearCountdown(); // 隐藏时也要确保计时器停止
+            this.statusHud.style.display = 'none';
+        }
+
+        start() {
+            if (this.isRendering) return;
+            this.isRendering = true;
+            this.renderLoop();
+        }
+
+        stop() {
+            this.isRendering = false;
+            this.clearCountdown(); // 停止时清除计时器
+            if (this.timer) {
+                cancelAnimationFrame(this.timer);
+                this.timer = null;
+            }
+        }
+        
+        enqueueReasoning(text) {
+            const chars = text.split('');
+            this.reasoningQueue.push(...chars);
+            if (!this.isRendering) this.start();
+        }
+
+        enqueueAnswer(text) {
+            const chars = text.split('');
+            this.answerQueue.push(...chars);
+            if (!this.isRendering) this.start();
+        }
+        
+        signalNetworkDone() {
+            this.networkFinished = true;
+            // 如果网络结束了但没有内容生成，更新状态
+            if (this.reasoningQueue.length === 0 && this.answerQueue.length === 0) {
+                this.updateStatus("✅ 流程结束，未生成内容");
+            }
+            if (!this.isRendering && (this.reasoningQueue.length > 0 || this.answerQueue.length > 0)) {
+                this.start();
+            }
+        }
+
+        renderLoop() {
+            if (!this.isRendering) return;
+
+            let hasWork = false;
+
+            // 1. 处理思考队列
+            if (this.reasoningQueue.length > 0) {
+                hasWork = true;
+                if (!this.hasReasoningStarted) {
+                    document.getElementById('reasoningContent').style.display = 'block';
+                    this.hideStatus(); // <--- 开始思考时隐藏状态栏
+                    this.hasReasoningStarted = true;
+                }
+                
+                const step = this.reasoningQueue.length > 200 ? 5 : (this.reasoningQueue.length > 50 ? 2 : 1);
+                
+                const chunk = this.reasoningQueue.splice(0, step).join('');
+                this.fullReasoning += chunk;
+                this.reasoningEl.innerText = this.fullReasoning;
+                this.scrollToBottom();
+            } 
+            // 2. 处理回答队列
+            else if (this.answerQueue.length > 0) {
+                hasWork = true;
+                if (this.hasReasoningStarted) {
+                    this.reasoningEl.classList.remove('typing-cursor');
+                }
+                if (!this.hasAnswerStarted) {
+                    this.answerEl.classList.remove('cursor-hidden');
+                    this.hideStatus(); // <--- 开始回答时隐藏状态栏
+                    this.hasAnswerStarted = true;
+                }
+
+                const step = this.answerQueue.length > 200 ? 5 : (this.answerQueue.length > 50 ? 3 : 1);
+                
+                const chunk = this.answerQueue.splice(0, step).join('');
+                this.fullAnswer += chunk;
+                this.answerEl.innerHTML = marked.parse(this.fullAnswer);
+                this.scrollToBottom();
+            }
+            
+            // 3. 退出条件
+            if (!hasWork) {
+                if (this.networkFinished) {
+                    this.isRendering = false;
+                    this.answerEl.classList.remove('typing-cursor');
+                    this.answerEl.classList.add('cursor-hidden');
+                    // 确保最后状态栏是隐藏的（如果生成了内容）
+                    if (this.fullAnswer || this.fullReasoning) this.hideStatus();
+                    logToUI("🏁 渲染完成");
+                    return; 
+                }
+            }
+            
+            this.timer = requestAnimationFrame(() => this.renderLoop());
+        }
+
+        scrollToBottom() {
+            const threshold = 100;
+            const distanceToBottom = this.chatContainer.scrollHeight - this.chatContainer.scrollTop - this.chatContainer.clientHeight;
+            if (distanceToBottom < threshold || !this.hasAnswerStarted) {
+                this.chatContainer.scrollTop = this.chatContainer.scrollHeight;
+            }
+        }
+        
+        flush() {
+            if (this.reasoningQueue.length > 0) {
+                this.fullReasoning += this.reasoningQueue.join('');
+                this.reasoningQueue = [];
+                this.reasoningEl.innerText = this.fullReasoning;
+            }
+            if (this.answerQueue.length > 0) {
+                this.fullAnswer += this.answerQueue.join('');
+                this.answerQueue = [];
+                this.answerEl.innerHTML = marked.parse(this.fullAnswer);
+                this.answerEl.classList.remove('typing-cursor'); 
+                this.answerEl.classList.add('cursor-hidden');
+            }
+            this.scrollToBottom();
+            this.stop();
+        }
+    }
+
+    const typeWriter = new TypewriterController();
+
+    // ================== 初始化 ==================
+    window.onload = function() {
+        fetchFiles();
+        setTimeout(() => manageDict('list'), 500);
+    };
+
+    async function fetchFiles() {
+        try {
+            const res = await fetch('/api/rag/list_files');
+            const data = await res.json();
+            const dbSel = document.getElementById('dbSelect');
+            const jsonSel = document.getElementById('jsonSelect');
+            
+            dbSel.innerHTML = ''; jsonSel.innerHTML = '';
+            
+            (data.dbs || []).forEach(f => dbSel.add(new Option(f, f)));
+            (data.jsons || []).forEach(f => jsonSel.add(new Option(f, f)));
+            
+            if(data.current_status) {
+                if(data.current_status.db_loaded) {
+                    dbSel.value = data.current_status.db_name;
+                    jsonSel.value = data.current_status.json_name;
+                    document.getElementById('configStatus').innerText = "✅ 已挂载: " + data.current_status.db_name;
+                    document.getElementById('configStatus').style.color = "green";
+                }
+                if(data.current_status.local_model) {
+                    document.getElementById('modelStatus').innerText = "Current: " + data.current_status.local_model;
+                    document.getElementById('localModelSelect').value = data.current_status.local_model;
+                }
+            }
+        } catch(e) { console.error(e); }
+    }
+
+    // ================== 接口调用 (配置、模型、字典) ==================
+    async function updateConfig() {
+        const db = document.getElementById('dbSelect').value;
+        const json = document.getElementById('jsonSelect').value;
+        if(!db || !json) return alert("请选择文件");
+        
+        document.getElementById('configStatus').innerText = "⏳ 加载中...";
+        try {
+            const res = await fetch('/api/rag/update_config', {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({ db_name: db, json_name: json })
+            });
+            const data = await res.json();
+            if(data.status === 'success') {
+                document.getElementById('configStatus').innerText = "✅ 挂载成功";
+                document.getElementById('configStatus').style.color = "green";
+                logToUI("✅ 引擎重载成功");
+            } else {
+                alert(data.message);
+                document.getElementById('configStatus').innerText = "❌ 失败";
+            }
+        } catch(e) { alert(e.message); }
+    }
+
+    async function switchLocalModel() {
+        const model = document.getElementById('localModelSelect').value;
+        document.getElementById('modelStatus').innerText = "⏳ Switching...";
+        try {
+            const res = await fetch('/api/rag/switch_local_model', {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({ model_name: model })
+            });
+            const data = await res.json();
+            document.getElementById('modelStatus').innerText = data.message;
+            logToUI(`🔄 模型切换: ${data.message}`);
+        } catch(e) {
+            document.getElementById('modelStatus').innerText = "Error";
+            alert(e.message);
+        }
+    }
+
+    async function manageDict(op) {
+        const val = document.getElementById('dictInput').value.trim();
+        
+        if((op === 'add' || op === 'delete') && !val) {
+            return alert("请输入航司名称");
+        }
+
+        try {
+            const res = await fetch('/api/rag/manage_dict', {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({ operation: op, value: val })
+            });
+            const data = await res.json();
+            if(data.status === 'success') {
+                if(data.data && Array.isArray(data.data)) {
+                    const count = data.data.length;
+                    const listStr = data.data.join(", ");
+                    document.getElementById('dictStatus').innerText = `数量: ${count}`;
+                    document.getElementById('dictStatus').title = listStr;
+                    if(op === 'list') logToUI(`📖 字典列表 (${count}): ${listStr}`);
+                    else logToUI(`📖 字典操作 ${op} 成功`);
+                }
+            } else {
+                alert(data.message);
+            }
+        } catch(e) { alert(e.message); }
+    }
+
+    async function stopSearch() {
+        try {
+            typeWriter.stop();
+            const res = await fetch('/api/rag/stop_search', { method: 'POST' });
+            const data = await res.json();
+            logToUI(`🛑 ${data.message}`);
+        } catch(e) { console.error(e); }
+    }
+
+    // ================== 核心问答逻辑 ==================
+    async function askRAG() {
+        const query = document.getElementById('queryInput').value.trim();
+        if (!query) return alert("请输入问题");
+
+        const params = {
+            query: query,
+            mode: document.getElementById('modeSelect').value,
+            doc_type: document.getElementById('docTypeSelect').value,
+            model: document.getElementById('modelSelect').value,
+            limit_vector: parseInt(document.getElementById('vecK').value) || 10,
+            limit_json: parseInt(document.getElementById('jsonK').value) || 10,
+            enable_local: document.getElementById('chkLocal').checked,
+            enable_routing: document.getElementById('chkRouting').checked
+        };
+
+        const btnAsk = document.getElementById('askBtn');
+        const btnStop = document.getElementById('stopBtn');
+        
+        btnAsk.disabled = true; btnAsk.innerText = "生成中...";
+        btnStop.disabled = false;
+        
+        document.getElementById('logContent').innerHTML = "";
+        document.getElementById('sourcesList').innerHTML = "";
+        document.getElementById('sourceCount').innerText = "0";
+        
+        typeWriter.reset();
+        
+        logToUI(`🚀 发起检索: ${query}`);
+
+        try {
+            const response = await fetch('/api/rag/stream_ask', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(params)
+            });
+
+            const reader = response.body.getReader();
+            const decoder = new TextDecoder();
+            let buffer = "";
+
+            while (true) {
+                const { done, value } = await reader.read();
+                if (done) break;
+
+                buffer += decoder.decode(value, { stream: true });
+                let boundary = buffer.indexOf("\n\n");
+
+                while (boundary !== -1) {
+                    const line = buffer.substring(0, boundary);
+                    buffer = buffer.substring(boundary + 2);
+
+                    if (line.startsWith("data: ")) {
+                        const jsonStr = line.substring(6).trim();
+                        if (jsonStr === "[DONE]") {
+                            typeWriter.signalNetworkDone();
+                            break;
+                        }
+
+                        try {
+                            const event = JSON.parse(jsonStr);
+                            await handleEvent(event);
+                        } catch (e) {
+                            console.error("Parse Error", e);
+                        }
+                    }
+                    boundary = buffer.indexOf("\n\n");
+                }
+            }
+        } catch (e) {
+            logToUI(`❌ 请求错误: ${e.message}`);
+        } finally {
+            typeWriter.signalNetworkDone(); 
+            btnAsk.disabled = false; btnAsk.innerText = "🚀 开始问答";
+            btnStop.disabled = true;
+            logToUI("📡 网络传输完成，正在完成渲染...");
+        }
+    }
+
+    async function handleEvent(event) {
+        const type = event.type;
+        const data = event.data;
+
+        switch (type) {
+            case 'log':
+                const cleanMsg = data.replace(/^\[.*?\]\s*/, '');
+                // 1. 原有逻辑：写入底部日志面板
+                logToUI(`<span style="color:#28a745">LOG:</span> ${cleanMsg}`);
+                // 2. 新增逻辑：更新聊天区域顶部的状态 HUD
+                typeWriter.updateStatus(cleanMsg);
+                break;
+            
+            case 'routing':
+                const routeMsg = `🔀 路由建议: ${data.file}`;
+                logToUI(routeMsg);
+                typeWriter.updateStatus(routeMsg);
+
+                const currentDB = document.getElementById('dbSelect').value || "";
+                const currentJSON = document.getElementById('jsonSelect').value || "";
+                const suggested = data.file || "";
+                
+                const isMatch = (currentDB.indexOf(suggested) !== -1) || (currentJSON.indexOf(suggested) !== -1);
+                
+                if (!isMatch) {
+                    typeWriter.updateStatus("⚠️ 等待用户确认路由建议...");
+                    logToUI(`⚠️ <b>阻断触发:</b> 建议文件与当前挂载不匹配，等待用户确认...`);
+                    await showRoutingConfirm(suggested);
+                    logToUI(`▶️ <b>用户确认:</b> 继续生成`);
+                    typeWriter.updateStatus("✅ 用户确认，继续生成...");
+                } else {
+                    logToUI(`✅ <b>路由匹配:</b> 自动继续`);
+                }
+                break;
+
+            case 'sources':
+                renderSources(data);
+                typeWriter.updateStatus(`📚 召回完成: 获得 ${data.length} 条资料，正在生成回答...`);
+                break;
+
+            case 'answer':
+                // 推送到打字机队列
+                if (data.reasoning_content) {
+                    typeWriter.enqueueReasoning(data.reasoning_content);
+                }
+                if (data.content) {
+                    typeWriter.enqueueAnswer(data.content);
+                }
+                break;
+
+            case 'error':
+                typeWriter.updateStatus(`❌ Error: ${data}`);
+                logToUI(`<span style="color:red">ERROR:</span> ${data}`);
+                break;
+        }
+    }
+
+    function showRoutingConfirm(suggestedFile) {
+        return new Promise((resolve) => {
+            const popover = document.getElementById('routingPopover');
+            const msgDiv = document.getElementById('routingMsg');
+            
+            msgDiv.innerText = `系统分析认为问题更适合查阅：\n📂 "${suggestedFile}"\n\n当前挂载的文件似乎不匹配，是否忽略建议继续？`;
+            popover.style.display = 'block';
+            
+            const btnCont = document.getElementById('btnRouteCont');
+            const btnStop = document.getElementById('btnRouteSwitch');
+            
+            const onCont = () => {
+                popover.style.display = 'none';
+                cleanup();
+                resolve(); 
+            };
+            
+            const onStop = () => {
+                popover.style.display = 'none';
+                cleanup();
+                stopSearch();
+                resolve(); 
+                alert("流程已停止，请在左侧手动切换知识库后重试。");
+            };
+            
+            function cleanup() {
+                btnCont.removeEventListener('click', onCont);
+                btnStop.removeEventListener('click', onStop);
+            }
+            
+            btnCont.addEventListener('click', onCont);
+            btnStop.addEventListener('click', onStop);
+        });
+    }
+
+    function renderSources(sources) {
+        const list = document.getElementById('sourcesList');
+        document.getElementById('sourceCount').innerText = sources.length;
+        
+        sources.forEach((item, idx) => {
+            const div = document.createElement('div');
+            div.className = 'source-card';
+            div.innerHTML = `
+                <div class="source-path">${idx+1}. ${item.path}</div>
+                <div class="source-meta">
+                    <span>${item.source || 'VECTOR'}</span>
+                    <span>Score: ${item.final_score.toFixed(3)}</span>
+                </div>
+                <div class="source-text" title="${item.content}">${item.content}</div>
+            `;
+            list.appendChild(div);
+        });
+    }
+
+    const dragHandle = document.getElementById('dragHandle');
+    let isDragging = false;
+    dragHandle.addEventListener('mousedown', () => isDragging = true);
+    document.addEventListener('mouseup', () => isDragging = false);
+    document.addEventListener('mousemove', (e) => {
+        if (!isDragging) return;
+        const h = window.innerHeight - e.clientY;
+        if(h > 100 && h < 600) document.getElementById('bottomContainer').style.height = h + "px";
+    });
+</script>
+</body>
+</html>

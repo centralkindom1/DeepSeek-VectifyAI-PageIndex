@@ -1,0 +1,4 @@
+These codes is in an attempt to give user suggestions on which files to be docked onto the RAG_frontend.py
+so you 1st run frontend_app.py to embeded the sourth json file(1st built by PAGEINDEX)
+after that on RAG_front_end.py if you chcked checkbox of "give me pdf name slections suggestions" then after your
+click search RAG button then a pop up will pop in to say that you should select xxx.pdf that is more fittable.

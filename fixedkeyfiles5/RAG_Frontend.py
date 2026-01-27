@@ -16,8 +16,8 @@ import numpy as np # Added for Vector Calculation
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
 # ================= 路由 API 配置 =================
-ROUTING_API_KEY = "sk-fXM4W0CdcKnNp3NVDfF85f2b90284b11AfDdF9F5627f627b"
-ROUTING_EMBED_URL = "https://aiplus.airchina.com.cn:18080/v1/embeddings"
+ROUTING_API_KEY = "YOUR API KEY"
+ROUTING_EMBED_URL = "https://WWW.SICONFLOW.COM:18080/v1/embeddings"
 ROUTING_MODEL_NAME = "bge-m3"
 
 # 尝试导入 psutil 用于系统监控
@@ -994,4 +994,5 @@ if __name__ == "__main__":
     app = QApplication(sys.argv)
     window = RAGRecallApp()
     window.show()
+
     sys.exit(app.exec_())

@@ -26,18 +26,18 @@ urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 os.environ['CURL_CA_BUNDLE'] = ''
 
 # API 配置 (硬编码 Key)
-API_KEY = "YOUR API KEY"
+API_KEY = "sk-fXM4W0CdcKnNp3NVDfF85f2b90284b11AfDdF9F5627f627b"
 
 # 1. Embedding API
-EMBEDDING_API_URL = "https://WWW.SICONFLOW.COM:18080/v1/embeddings" 
+EMBEDDING_API_URL = "https://aiplus.airchina.com.cn:18080/v1/embeddings" 
 EMBEDDING_MODEL_NAME = "bge-m3"
 
 # 2. Rerank API
-RERANK_API_URL = "https://WWW.SICONFLOW.COM:18080/v1/rerank" 
+RERANK_API_URL = "https://aiplus.airchina.com.cn:18080/v1/rerank" 
 RERANK_MODEL_NAME = "bge-reranker-v2-m3"
 
 # 3. DeepSeek/LLM API
-DEEPSEEK_API_URL = "https://WWW.DEEPSEEK.COM:18080/v1/chat/completions"
+DEEPSEEK_API_URL = "https://aiplus.airchina.com.cn:18080/v1/chat/completions"
 DEEPSEEK_V3_MODEL_NAME = "DeepSeek-V3"
 
 # 仅用于日志显示的名称
